@@ -6,6 +6,7 @@ pub mod event_registration_repository;
 pub mod event_repository;
 pub mod notification_repository;
 pub mod project_repository;
+pub mod rate_limit_repository;
 pub mod resource_repository;
 pub mod user_repository;
 pub mod verification_token_repository;
