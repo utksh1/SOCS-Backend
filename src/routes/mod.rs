@@ -1,3 +1,4 @@
+pub mod admin_routes;
 pub mod applications;
 pub mod auth;
 pub mod blog;

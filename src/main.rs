@@ -22,6 +22,7 @@ use tower_http::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::env::Config;
+use crate::services::cleanup_service;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -78,6 +79,9 @@ async fn main() {
         redis,
     };
     
+    // Clone the pool for the cleanup scheduler before state is moved
+    let pool_for_cleanup = state.db.clone();
+    
     // Build CORS layer
     let cors_origins: Vec<_> = config
         .cors_origin
@@ -97,18 +101,46 @@ async fn main() {
     let optional_auth_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::optional_auth_middleware);
     let toplead_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::require_toplead);
     
+    // Rate limit middleware
+    let auth_rate_limit = axum::middleware::from_fn_with_state(state.clone(), middleware::rate_limit::auth_rate_limit_middleware);
+    let public_rate_limit = axum::middleware::from_fn_with_state(state.clone(), middleware::rate_limit::public_rate_limit_middleware);
+    let authenticated_rate_limit = axum::middleware::from_fn_with_state(state.clone(), middleware::rate_limit::authenticated_rate_limit_middleware);
+    
     // Build auth routes
-    let auth_routes = Router::new()
-        .route("/register", axum::routing::post(routes::auth::register).layer(toplead_layer.clone()))
+    // Register route (auth rate limit + toplead required)
+    let auth_register = Router::new()
+        .route("/register", axum::routing::post(routes::auth::register))
+        .layer(auth_rate_limit.clone())
+        .layer(toplead_layer.clone());
+    
+    // Login route (auth rate limit only)
+    let auth_login = Router::new()
         .route("/login", axum::routing::post(routes::auth::login))
-        .route("/me", axum::routing::get(routes::auth::get_me).layer(auth_layer.clone()))
-        .route("/update-name", axum::routing::patch(routes::auth::update_name).layer(auth_layer.clone()))
-        .route("/change-password", axum::routing::patch(routes::auth::change_password).layer(auth_layer.clone()));
+        .layer(auth_rate_limit.clone());
+    
+    // Change password route (auth rate limit + auth required)
+    let auth_change_password = Router::new()
+        .route("/change-password", axum::routing::patch(routes::auth::change_password))
+        .layer(auth_rate_limit.clone())
+        .layer(auth_layer.clone());
+    
+    // Other protected auth routes (authenticated rate limit + auth required)
+    let auth_protected = Router::new()
+        .route("/me", axum::routing::get(routes::auth::get_me))
+        .route("/update-name", axum::routing::patch(routes::auth::update_name))
+        .layer(authenticated_rate_limit.clone())
+        .layer(auth_layer.clone());
+    
+    let auth_routes = auth_register
+        .merge(auth_login)
+        .merge(auth_change_password)
+        .merge(auth_protected);
     
     // Build project routes (GET public for approved, POST/PUT/DELETE protected with approval workflow)
     let project_public = Router::new()
         .route("/", axum::routing::get(routes::projects::list_projects))
         .route("/:id", axum::routing::get(routes::projects::get_project))
+        .layer(public_rate_limit.clone())
         .layer(optional_auth_layer.clone());
     
     let project_protected = Router::new()
@@ -120,6 +152,7 @@ async fn main() {
         .route("/:id/approve", axum::routing::post(routes::projects::approve_or_reject_project))
         .route("/:id/collaborators", axum::routing::post(routes::projects::add_collaborator))
         .route("/:id/collaborators/:user_id", axum::routing::delete(routes::projects::remove_collaborator))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let project_routes = project_public.merge(project_protected);
@@ -128,12 +161,14 @@ async fn main() {
     let event_public = Router::new()
         .route("/", axum::routing::get(routes::events::list_events))
         .route("/:id", axum::routing::get(routes::events::get_event))
-        .route("/:id/register", axum::routing::post(routes::event_registrations::register_for_event));
+        .route("/:id/register", axum::routing::post(routes::event_registrations::register_for_event))
+        .layer(public_rate_limit.clone());
     
     let event_protected = Router::new()
         .route("/", axum::routing::post(routes::events::create_event))
         .route("/:id", axum::routing::delete(routes::events::delete_event))
         .route("/:id/registrations", axum::routing::get(routes::event_registrations::list_registrations))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let event_routes = event_public.merge(event_protected);
@@ -142,12 +177,14 @@ async fn main() {
     let user_public = Router::new()
         .route("/", axum::routing::get(routes::users::list_users))
         .route("/slug/:slug", axum::routing::get(routes::users::get_user_by_slug))
-        .route("/:id", axum::routing::get(routes::users::get_user));
+        .route("/:id", axum::routing::get(routes::users::get_user))
+        .layer(public_rate_limit.clone());
     
     let user_protected = Router::new()
         .route("/", axum::routing::post(routes::users::create_user))
         .route("/:id", axum::routing::put(routes::users::update_user)
             .delete(routes::users::delete_user))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let user_routes = user_public.merge(user_protected);
@@ -156,6 +193,7 @@ async fn main() {
     let resource_public = Router::new()
         .route("/", axum::routing::get(routes::resources::list_resources))
         .route("/:id", axum::routing::get(routes::resources::get_resource))
+        .layer(public_rate_limit.clone())
         .layer(optional_auth_layer.clone());
     
     let resource_protected = Router::new()
@@ -167,6 +205,7 @@ async fn main() {
         .route("/:id/approve", axum::routing::post(routes::resources::approve_or_reject_resource))
         .route("/:id/collaborators", axum::routing::post(routes::resources::add_collaborator))
         .route("/:id/collaborators/:user_id", axum::routing::delete(routes::resources::remove_collaborator))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let resource_routes = resource_public.merge(resource_protected);
@@ -174,33 +213,39 @@ async fn main() {
     // Build visual routes (GET public, POST/DELETE protected)
     let visual_public = Router::new()
         .route("/", axum::routing::get(routes::visuals::list_visuals))
-        .route("/:id", axum::routing::get(routes::visuals::get_visual));
+        .route("/:id", axum::routing::get(routes::visuals::get_visual))
+        .layer(public_rate_limit.clone());
     
     let visual_protected = Router::new()
         .route("/", axum::routing::post(routes::visuals::create_visual))
         .route("/:id", axum::routing::delete(routes::visuals::delete_visual))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let visual_routes = visual_public.merge(visual_protected);
     
     // Build contact routes (POST public, GET protected)
     let contact_public = Router::new()
-        .route("/", axum::routing::post(routes::contacts::create_contact));
+        .route("/", axum::routing::post(routes::contacts::create_contact))
+        .layer(public_rate_limit.clone());
     
     let contact_protected = Router::new()
         .route("/", axum::routing::get(routes::contacts::list_contacts))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let contact_routes = contact_public.merge(contact_protected);
     
     // Build application routes (POST public, GET/PATCH protected)
     let application_public = Router::new()
-        .route("/", axum::routing::post(routes::applications::create_application));
+        .route("/", axum::routing::post(routes::applications::create_application))
+        .layer(public_rate_limit.clone());
     
     let application_protected = Router::new()
         .route("/", axum::routing::get(routes::applications::list_applications))
         .route("/:id", axum::routing::get(routes::applications::get_application)
             .patch(routes::applications::review_application))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let application_routes = application_public.merge(application_protected);
@@ -209,6 +254,7 @@ async fn main() {
     let blog_public = Router::new()
         .route("/", axum::routing::get(routes::blog::list_blog_posts))
         .route("/slug/:slug", axum::routing::get(routes::blog::get_blog_post))
+        .layer(public_rate_limit.clone())
         .layer(optional_auth_layer.clone());
     
     let blog_protected = Router::new()
@@ -220,6 +266,7 @@ async fn main() {
         .route("/:id/approve", axum::routing::post(routes::blog::approve_or_reject_blog_post))
         .route("/:id/collaborators", axum::routing::post(routes::blog::add_collaborator))
         .route("/:id/collaborators/:user_id", axum::routing::delete(routes::blog::remove_collaborator))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let blog_routes = blog_public.merge(blog_protected);
@@ -229,6 +276,7 @@ async fn main() {
         .route("/image", axum::routing::post(routes::upload::upload_image))
         .route("/profile-picture", axum::routing::post(routes::upload::upload_profile_picture))
         .route("/delete", axum::routing::post(routes::upload::delete_image))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     // Build stats routes (admin only)
@@ -239,6 +287,7 @@ async fn main() {
         .route("/events", axum::routing::get(routes::stats::get_event_stats))
         .route("/applications", axum::routing::get(routes::stats::get_application_stats))
         .route("/blog", axum::routing::get(routes::stats::get_blog_stats))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     // Build notification routes (protected)
@@ -248,18 +297,21 @@ async fn main() {
         .route("/:id/read", axum::routing::patch(routes::notifications::mark_as_read))
         .route("/read-all", axum::routing::patch(routes::notifications::mark_all_as_read))
         .route("/:id", axum::routing::delete(routes::notifications::delete_notification))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     // Build announcement routes (public GET, protected POST/PUT/DELETE)
     let announcement_public = Router::new()
         .route("/", axum::routing::get(routes::notifications::get_announcements))
-        .route("/:id", axum::routing::get(routes::notifications::get_announcement));
+        .route("/:id", axum::routing::get(routes::notifications::get_announcement))
+        .layer(public_rate_limit.clone());
     
     let announcement_protected = Router::new()
         .route("/", axum::routing::post(routes::notifications::create_announcement))
         .route("/:id", axum::routing::put(routes::notifications::update_announcement)
             .delete(routes::notifications::delete_announcement))
         .route("/:id/pin", axum::routing::patch(routes::notifications::toggle_pin_announcement))
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let announcement_routes = Router::new()
@@ -308,6 +360,12 @@ async fn main() {
         .route("/users/:user_id/contributions/:contribution_id",
             axum::routing::put(routes::rich_content::update_team_contribution)
             .delete(routes::rich_content::delete_team_contribution))
+        .layer(authenticated_rate_limit.clone())
+        .layer(auth_layer.clone());
+    
+    // Build admin routes (requires TopLead or Mentor role)
+    let admin_routes = routes::admin_routes::configure()
+        .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     // Build application router
@@ -328,6 +386,7 @@ async fn main() {
         .nest("/api/stats", stats_routes)
         .nest("/api/notifications", notification_routes)
         .nest("/api/announcements", announcement_routes)
+        .nest("/api/admin", admin_routes)
         .nest("/api", rich_content_routes)
         .with_state(state)
         .layer(cors)
@@ -343,6 +402,24 @@ async fn main() {
     tracing::info!("🚀 Server listening on {}", addr);
     tracing::info!("📝 API available at http://{}/api", addr);
     tracing::info!("💚 Health check at http://{}/health", addr);
+    
+    // Start cleanup scheduler
+    tokio::spawn(async move {
+        match cleanup_service::start_cleanup_scheduler(pool_for_cleanup).await {
+            Ok(_) => {
+                tracing::info!("Cleanup scheduler started successfully");
+            }
+            Err(e) => {
+                tracing::error!("Failed to start cleanup scheduler: {}", e);
+                return;
+            }
+        }
+        
+        // Keep the scheduler alive
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+        }
+    });
     
     axum::serve(listener, app)
         .await

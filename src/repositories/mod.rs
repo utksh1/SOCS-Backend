@@ -8,4 +8,5 @@ pub mod notification_repository;
 pub mod project_repository;
 pub mod resource_repository;
 pub mod user_repository;
+pub mod verification_token_repository;
 pub mod visual_repository;

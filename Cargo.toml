@@ -55,6 +55,9 @@ aws-config = "1"
 # Email
 lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "hostname"] }
 
+# Background jobs
+tokio-cron-scheduler = "0.10"
+
 [dev-dependencies]
 reqwest = { version = "0.11", features = ["json"] }
 
