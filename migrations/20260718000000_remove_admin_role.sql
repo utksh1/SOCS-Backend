@@ -12,6 +12,7 @@ WHERE role NOT IN ('MEMBER', 'MANAGEMENT');
 CREATE TYPE user_role_new AS ENUM ('MEMBER', 'MANAGEMENT');
 
 -- Update the table to use new enum
+ALTER TABLE users ALTER COLUMN role DROP DEFAULT;
 ALTER TABLE users 
   ALTER COLUMN role TYPE user_role_new 
   USING role::text::user_role_new;
@@ -19,4 +20,6 @@ ALTER TABLE users
 -- Drop old enum and rename new one
 DROP TYPE user_role;
 ALTER TYPE user_role_new RENAME TO user_role;
+
+ALTER TABLE users ALTER COLUMN role SET DEFAULT 'MEMBER'::user_role;
 

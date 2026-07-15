@@ -43,11 +43,14 @@ UPDATE users SET role = 'MEMBER'::user_role_new::text::user_role_new
 WHERE role NOT IN ('TOPLEAD', 'MENTOR', 'CORE', 'LEAD', 'MEMBER');
 
 -- Step 6: Switch to new role enum
+ALTER TABLE users ALTER COLUMN role DROP DEFAULT;
 ALTER TABLE users ALTER COLUMN role TYPE user_role_new USING role::text::user_role_new;
 
 -- Step 7: Drop old enum and rename new one
 DROP TYPE user_role;
 ALTER TYPE user_role_new RENAME TO user_role;
+
+ALTER TABLE users ALTER COLUMN role SET DEFAULT 'MEMBER'::user_role;
 
 -- Step 8: Add constraints and indexes
 ALTER TABLE users ADD CONSTRAINT unique_user_slug UNIQUE (slug);
