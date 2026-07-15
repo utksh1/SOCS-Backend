@@ -6,6 +6,7 @@ mod models;
 mod repositories;
 mod routes;
 mod services;
+mod tasks;
 mod utils;
 
 use axum::{
@@ -81,6 +82,12 @@ async fn main() {
     
     // Clone the pool for the cleanup scheduler before state is moved
     let pool_for_cleanup = state.db.clone();
+    
+    // Spawn background cleanup task for verification tokens and rate limits
+    let verification_cleanup_pool = state.db.clone();
+    tokio::spawn(async move {
+        tasks::cleanup::start_cleanup_task(verification_cleanup_pool).await;
+    });
     
     // Build CORS layer
     let cors_origins: Vec<_> = config
