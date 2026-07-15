@@ -23,11 +23,12 @@ pub async fn register_for_event(
     let event = event_repository::find_by_id(&state.db, event_id).await?
         .ok_or_else(|| crate::error::ApiError::NotFound("Event not found".to_string()))?;
     
+    let email = crate::utils::sanitize::normalize_email(&payload.email);
     let registration = event_registration_repository::register(
         &state.db,
         event_id,
         &payload.name,
-        &payload.email,
+        &email,
         None,
     ).await.map_err(|e| {
         if e.to_string().contains("duplicate") || e.to_string().contains("unique") {
