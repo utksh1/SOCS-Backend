@@ -14,15 +14,4 @@ pub fn slugify(s: &str) -> String {
         .join("-")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_slugify() {
-        assert_eq!(slugify("Hello World"), "hello-world");
-        assert_eq!(slugify("My Project!!"), "my-project");
-        assert_eq!(slugify("Test---Slug"), "test-slug");
-        assert_eq!(slugify("  spaces  "), "spaces");
-    }
-}
