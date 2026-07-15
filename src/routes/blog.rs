@@ -320,9 +320,7 @@ pub async fn approve_or_reject_blog_post(
     Json(payload): Json<ApprovalDto>,
 ) -> Result<Json<serde_json::Value>> {
     // Only TopLead can approve/reject
-    if !user.has_role(&UserRole::TopLead) {
-        return Err(ApiError::Forbidden("Only TopLead can approve or reject blog posts".to_string()));
-    }
+    crate::middleware::auth::can_approve_content(&user)?;
     
     let status = match payload.status.as_str() {
         "approved" => ContentStatus::Approved,

@@ -56,11 +56,7 @@ pub async fn create_user(
     payload.validate()?;
     
     // Check if creator has permission to create users
-    if !creator.highest_role().can_create_delete_users() {
-        return Err(crate::error::ApiError::Forbidden(
-            "Only TopLead or Mentor can create users".to_string()
-        ));
-    }
+    crate::middleware::auth::can_create_delete_users(&creator)?;
     
     // Ensure user has at least Member role
     let mut roles = payload.roles;
@@ -69,14 +65,7 @@ pub async fn create_user(
     }
     
     // Check if creator can assign all requested roles
-    let creator_level = creator.role_level();
-    for role in &roles {
-        if role.level() > creator_level {
-            return Err(crate::error::ApiError::Forbidden(
-                format!("You cannot assign {:?} role", role)
-            ));
-        }
-    }
+    crate::middleware::auth::can_assign_roles(&creator, &roles)?;
     
     // Check if email already exists
     if user_repository::find_by_email(&state.db, &payload.email).await?.is_some() {
@@ -174,14 +163,7 @@ pub async fn update_user(
     .ok_or_else(|| crate::error::ApiError::NotFound("User not found".to_string()))?;
     
     // Check if updater has permission to update this user
-    let updater_level = updater.role_level();
-    let target_level = target_user.role_level();
-    
-    if updater_level < target_level {
-        return Err(crate::error::ApiError::Forbidden(
-            "You don't have permission to update this user".to_string()
-        ));
-    }
+    crate::middleware::auth::can_manage_user(&updater, &target_user)?;
     
     // If updating roles, check if updater can assign all new roles
     if let Some(ref new_roles) = payload.roles {
@@ -191,13 +173,7 @@ pub async fn update_user(
             roles.push(crate::models::user::UserRole::Member);
         }
         
-        for role in &roles {
-            if role.level() > updater_level {
-                return Err(crate::error::ApiError::Forbidden(
-                    format!("You cannot assign {:?} role", role)
-                ));
-            }
-        }
+        crate::middleware::auth::can_assign_roles(&updater, &roles)?;
     }
     
     // Prevent user from changing their own roles
@@ -343,11 +319,7 @@ pub async fn delete_user(
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
     // Check if deleter has permission
-    if !deleter.highest_role().can_create_delete_users() {
-        return Err(crate::error::ApiError::Forbidden(
-            "Only TopLead or Mentor can delete users".to_string()
-        ));
-    }
+    crate::middleware::auth::can_create_delete_users(&deleter)?;
     
     // Prevent user from deleting themselves
     if user_id == deleter.id {

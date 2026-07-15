@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
-    models::user::UserRole,
+    models::user::{SafeUser, UserRole},
     services::auth_service,
     utils::jwt,
     AppState,
@@ -112,4 +112,80 @@ pub async fn require_toplead(
     request.extensions_mut().insert(user);
     
     Ok(next.run(request).await)
+}
+
+// Authorization helper functions for use in route handlers
+
+/// Check if user can manage (update/delete) a target user
+pub fn can_manage_user(actor: &SafeUser, target: &SafeUser) -> Result<(), ApiError> {
+    let actor_level = actor.role_level();
+    let target_level = target.role_level();
+    
+    if actor_level <= target_level {
+        return Err(ApiError::Forbidden(
+            "You don't have permission to manage this user".to_string()
+        ));
+    }
+    
+    Ok(())
+}
+
+/// Check if user can assign a specific role
+pub fn can_assign_role(actor: &SafeUser, role: &UserRole) -> Result<(), ApiError> {
+    if actor.role_level() < role.level() {
+        return Err(ApiError::Forbidden(
+            format!("You cannot assign {:?} role (insufficient level)", role)
+        ));
+    }
+    Ok(())
+}
+
+/// Check if user can assign all roles in a list
+pub fn can_assign_roles(actor: &SafeUser, roles: &[UserRole]) -> Result<(), ApiError> {
+    let actor_level = actor.role_level();
+    
+    for role in roles {
+        if role.level() > actor_level {
+            return Err(ApiError::Forbidden(
+                format!("You cannot assign {:?} role (insufficient level)", role)
+            ));
+        }
+    }
+    
+    Ok(())
+}
+
+/// Check if user can create/delete users
+pub fn can_create_delete_users(user: &SafeUser) -> Result<(), ApiError> {
+    if !user.highest_role().can_create_delete_users() {
+        return Err(ApiError::Forbidden(
+            "Only TopLead or Mentor can create/delete users".to_string()
+        ));
+    }
+    Ok(())
+}
+
+/// Check if user can approve content (Mentor or TopLead)
+pub fn can_approve_content(user: &SafeUser) -> Result<(), ApiError> {
+    if !user.has_role(&UserRole::Mentor) && !user.has_role(&UserRole::TopLead) {
+        return Err(ApiError::Forbidden(
+            "Only Mentor or TopLead can approve content".to_string()
+        ));
+    }
+    Ok(())
+}
+
+/// Check if user is the owner or has higher role level
+pub fn is_owner_or_higher(actor: &SafeUser, owner_id: Uuid, min_role_level: u8) -> Result<(), ApiError> {
+    if actor.id == owner_id {
+        return Ok(());
+    }
+    
+    if actor.role_level() >= min_role_level {
+        return Ok(());
+    }
+    
+    Err(ApiError::Forbidden(
+        "You don't have permission to access this resource".to_string()
+    ))
 }
