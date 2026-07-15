@@ -18,6 +18,7 @@ pub enum ApiError {
     ValidationError(String),
     RateLimitExceeded { retry_after: u64 },
     TooManyRequests(String),
+    Gone(String),
 }
 
 impl IntoResponse for ApiError {
@@ -49,6 +50,7 @@ impl IntoResponse for ApiError {
                     ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
                     ApiError::ValidationError(msg) => (StatusCode::BAD_REQUEST, msg),
                     ApiError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
+                    ApiError::Gone(msg) => (StatusCode::GONE, msg),
                     ApiError::InternalServerError => {
                         (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
                     }
