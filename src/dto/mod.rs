@@ -8,6 +8,6 @@ pub mod pagination_dto;
 pub mod project_dto;
 pub mod resource_dto;
 pub mod rich_content_dto;
-pub mod team_dto;
+
 pub mod upload_dto;
 pub mod visual_dto;

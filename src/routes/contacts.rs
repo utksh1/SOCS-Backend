@@ -20,17 +20,20 @@ pub async fn create_contact(
     ).await?;
     
     // Send notification to admin
-    let email_service = EmailService::new();
-    let admin_email = std::env::var("ADMIN_EMAIL").unwrap_or_else(|_| "admin@socs.network".to_string());
-    
-    if let Err(e) = email_service.send_contact_form_notification(
-        &admin_email,
-        &payload.name,
-        &payload.email,
-        &payload.subject,
-        &payload.message,
-    ).await {
-        tracing::error!("Failed to send contact form notification: {}", e);
+    if let Ok(email_service) = EmailService::new() {
+        let admin_email = std::env::var("ADMIN_EMAIL").unwrap_or_else(|_| "admin@socs.network".to_string());
+        
+        if let Err(e) = email_service.send_contact_form_notification(
+            &admin_email,
+            &payload.name,
+            &payload.email,
+            &payload.subject,
+            &payload.message,
+        ).await {
+            tracing::error!("Failed to send contact form notification: {}", e);
+        }
+    } else {
+        tracing::error!("Failed to initialize EmailService");
     }
     
     Ok((StatusCode::CREATED, Json(json!({"success": true, "message": "Contact submitted successfully", "data": contact}))))

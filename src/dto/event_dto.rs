@@ -24,23 +24,3 @@ pub struct CreateEventDto {
     pub location: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdateEventDto {
-    #[validate(length(min = 1, max = 255))]
-    pub slug: Option<String>,
-    
-    #[validate(length(min = 1, max = 255))]
-    pub title: Option<String>,
-    
-    #[validate(length(min = 1))]
-    pub description: Option<String>,
-    
-    pub date: Option<DateTime<Utc>>,
-    
-    pub event_type: Option<EventType>,
-    
-    pub status: Option<EventStatus>,
-    
-    #[validate(length(max = 500))]
-    pub location: Option<String>,
-}

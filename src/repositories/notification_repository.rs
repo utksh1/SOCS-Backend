@@ -2,29 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use crate::models::notification::Notification;
 
-pub async fn create(
-    pool: &PgPool,
-    user_id: Uuid,
-    title: &str,
-    message: &str,
-    notification_type: &str,
-    link: Option<&str>,
-) -> Result<Notification, sqlx::Error> {
-    sqlx::query_as::<_, Notification>(
-        r#"
-        INSERT INTO notifications (user_id, title, message, type, link)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, user_id, title, message, type as notification_type, link, read, created_at
-        "#
-    )
-    .bind(user_id)
-    .bind(title)
-    .bind(message)
-    .bind(notification_type)
-    .bind(link)
-    .fetch_one(pool)
-    .await
-}
+
 
 pub async fn find_by_user(pool: &PgPool, user_id: Uuid, limit: i64) -> Result<Vec<Notification>, sqlx::Error> {
     sqlx::query_as::<_, Notification>(

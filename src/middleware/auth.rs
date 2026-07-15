@@ -118,6 +118,10 @@ pub async fn require_toplead(
 
 /// Check if user can manage (update/delete) a target user
 pub fn can_manage_user(actor: &SafeUser, target: &SafeUser) -> Result<(), ApiError> {
+    if actor.id == target.id {
+        return Ok(());
+    }
+    
     let actor_level = actor.role_level();
     let target_level = target.role_level();
     
@@ -130,15 +134,7 @@ pub fn can_manage_user(actor: &SafeUser, target: &SafeUser) -> Result<(), ApiErr
     Ok(())
 }
 
-/// Check if user can assign a specific role
-pub fn can_assign_role(actor: &SafeUser, role: &UserRole) -> Result<(), ApiError> {
-    if actor.role_level() < role.level() {
-        return Err(ApiError::Forbidden(
-            format!("You cannot assign {:?} role (insufficient level)", role)
-        ));
-    }
-    Ok(())
-}
+
 
 /// Check if user can assign all roles in a list
 pub fn can_assign_roles(actor: &SafeUser, roles: &[UserRole]) -> Result<(), ApiError> {
@@ -175,17 +171,3 @@ pub fn can_approve_content(user: &SafeUser) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Check if user is the owner or has higher role level
-pub fn is_owner_or_higher(actor: &SafeUser, owner_id: Uuid, min_role_level: u8) -> Result<(), ApiError> {
-    if actor.id == owner_id {
-        return Ok(());
-    }
-    
-    if actor.role_level() >= min_role_level {
-        return Ok(());
-    }
-    
-    Err(ApiError::Forbidden(
-        "You don't have permission to access this resource".to_string()
-    ))
-}

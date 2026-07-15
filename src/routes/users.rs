@@ -1,7 +1,6 @@
 use axum::{extract::{Path, Query, State}, Extension, Json};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
-use sqlx::Row;
 use uuid::Uuid;
 use validator::Validate;
 

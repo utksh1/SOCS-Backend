@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     Extension, Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use validator::Validate;
 

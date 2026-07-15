@@ -37,7 +37,7 @@ pub async fn list_project_features(
 
 pub async fn create_project_feature(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(project_id): Path<Uuid>,
     Json(payload): Json<CreateProjectFeatureDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
@@ -67,7 +67,7 @@ pub async fn create_project_feature(
 
 pub async fn update_project_feature(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path((project_id, feature_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdateProjectFeatureDto>,
 ) -> Result<Json<serde_json::Value>> {
@@ -101,7 +101,7 @@ pub async fn update_project_feature(
 
 pub async fn delete_project_feature(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path((project_id, feature_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
 
@@ -125,7 +125,7 @@ pub async fn delete_project_feature(
 
 pub async fn reorder_project_features(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(project_id): Path<Uuid>,
     Json(payload): Json<ReorderItemsDto>,
 ) -> Result<Json<serde_json::Value>> {
@@ -181,7 +181,7 @@ pub async fn list_project_contributors(
 
 pub async fn add_project_contributor(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(project_id): Path<Uuid>,
     Json(payload): Json<CreateProjectContributorDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
@@ -212,7 +212,7 @@ pub async fn add_project_contributor(
 
 pub async fn remove_project_contributor(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path((project_id, contributor_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
 
@@ -257,7 +257,7 @@ pub async fn list_event_timeline(
 
 pub async fn create_event_timeline_item(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(event_id): Path<Uuid>,
     Json(payload): Json<CreateEventTimelineDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
@@ -287,7 +287,7 @@ pub async fn create_event_timeline_item(
 
 pub async fn update_event_timeline_item(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path((event_id, item_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdateEventTimelineDto>,
 ) -> Result<Json<serde_json::Value>> {
@@ -323,7 +323,7 @@ pub async fn update_event_timeline_item(
 
 pub async fn delete_event_timeline_item(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path((event_id, item_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
 
@@ -347,7 +347,7 @@ pub async fn delete_event_timeline_item(
 
 pub async fn reorder_event_timeline(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(event_id): Path<Uuid>,
     Json(payload): Json<ReorderItemsDto>,
 ) -> Result<Json<serde_json::Value>> {
@@ -395,7 +395,7 @@ pub async fn list_event_prerequisites(
 
 pub async fn create_event_prerequisite(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(event_id): Path<Uuid>,
     Json(payload): Json<CreateEventPrerequisiteDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
@@ -424,7 +424,7 @@ pub async fn create_event_prerequisite(
 
 pub async fn update_event_prerequisite(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path((event_id, prereq_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdateEventPrerequisiteDto>,
 ) -> Result<Json<serde_json::Value>> {
@@ -458,7 +458,7 @@ pub async fn update_event_prerequisite(
 
 pub async fn delete_event_prerequisite(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path((event_id, prereq_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
 
@@ -482,7 +482,7 @@ pub async fn delete_event_prerequisite(
 
 pub async fn reorder_event_prerequisites(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(event_id): Path<Uuid>,
     Json(payload): Json<ReorderItemsDto>,
 ) -> Result<Json<serde_json::Value>> {
@@ -530,7 +530,7 @@ pub async fn list_team_contributions(
 
 pub async fn create_team_contribution(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(member_id): Path<Uuid>,
     Json(payload): Json<CreateTeamContributionDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
@@ -564,7 +564,7 @@ pub async fn create_team_contribution(
 
 pub async fn update_team_contribution(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path((member_id, contribution_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdateTeamContributionDto>,
 ) -> Result<Json<serde_json::Value>> {
@@ -609,7 +609,7 @@ pub async fn update_team_contribution(
 
 pub async fn delete_team_contribution(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path((member_id, contribution_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
 

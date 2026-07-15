@@ -1,5 +1,5 @@
 use sqlx::PgPool;
-use uuid::Uuid;
+
 
 use crate::models::contact::Contact;
 
@@ -37,15 +37,3 @@ pub async fn find_all(pool: &PgPool) -> Result<Vec<Contact>, sqlx::Error> {
     .await
 }
 
-pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Contact>, sqlx::Error> {
-    sqlx::query_as::<_, Contact>(
-        r#"
-        SELECT id, name, email, subject, message, replied, created_at
-        FROM contacts
-        WHERE id = $1
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-}

@@ -9,7 +9,7 @@ use validator::Validate;
 
 use crate::{
     dto::{
-        event_dto::{CreateEventDto, UpdateEventDto},
+        event_dto::CreateEventDto,
         pagination_dto::{PaginationParams, PaginationMeta},
     },
     error::Result,
@@ -81,7 +81,7 @@ pub async fn create_event(
 
 pub async fn delete_event(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
     // Check permission

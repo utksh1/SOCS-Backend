@@ -38,18 +38,21 @@ pub async fn register_for_event(
     })?;
     
     // Send confirmation email
-    let email_service = EmailService::new();
-    let event_date = event.date.format("%B %d, %Y at %I:%M %p").to_string();
-    let event_location = event.location.as_deref().unwrap_or("TBA");
-    
-    if let Err(e) = email_service.send_event_registration_confirmation(
-        &payload.email,
-        &payload.name,
-        &event.title,
-        &event_date,
-        event_location,
-    ).await {
-        tracing::error!("Failed to send event registration confirmation: {}", e);
+    if let Ok(email_service) = EmailService::new() {
+        let event_date = event.date.format("%B %d, %Y at %I:%M %p").to_string();
+        let event_location = event.location.as_deref().unwrap_or("TBA");
+        
+        if let Err(e) = email_service.send_event_registration_confirmation(
+            &payload.email,
+            &payload.name,
+            &event.title,
+            &event_date,
+            event_location,
+        ).await {
+            tracing::error!("Failed to send event registration confirmation: {}", e);
+        }
+    } else {
+        tracing::error!("Failed to initialize EmailService");
     }
     
     Ok((StatusCode::CREATED, Json(json!({"success": true, "message": "Registered successfully", "data": registration}))))

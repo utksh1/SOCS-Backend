@@ -32,19 +32,9 @@ impl UserRole {
         }
     }
     
-    /// Check if this role can manage another role
-    pub fn can_manage(&self, other: &UserRole) -> bool {
-        self.level() >= other.level()
-    }
-    
     /// Check if this role can create/delete users
     pub fn can_create_delete_users(&self) -> bool {
         matches!(self, UserRole::TopLead | UserRole::Mentor)
-    }
-    
-    /// Check if this role has management capabilities
-    pub fn can_manage_users(&self) -> bool {
-        matches!(self, UserRole::TopLead | UserRole::Mentor | UserRole::Core)
     }
 }
 
@@ -74,21 +64,6 @@ impl User {
         self.roles.iter()
             .max_by_key(|r| r.level())
             .unwrap_or(&UserRole::Member)
-    }
-    
-    /// Check if user has a specific role
-    pub fn has_role(&self, role: &UserRole) -> bool {
-        self.roles.contains(role)
-    }
-    
-    /// Check if user has any role at or above a certain level
-    pub fn has_role_level(&self, min_level: u8) -> bool {
-        self.roles.iter().any(|r| r.level() >= min_level)
-    }
-    
-    /// Get role level (highest role's level)
-    pub fn role_level(&self) -> u8 {
-        self.highest_role().level()
     }
 }
 
@@ -123,11 +98,6 @@ impl SafeUser {
     /// Check if user has a specific role
     pub fn has_role(&self, role: &UserRole) -> bool {
         self.roles.contains(role)
-    }
-    
-    /// Check if user has any role at or above a certain level
-    pub fn has_role_level(&self, min_level: u8) -> bool {
-        self.roles.iter().any(|r| r.level() >= min_level)
     }
     
     /// Get role level (highest role's level)

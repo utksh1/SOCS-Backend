@@ -26,14 +26,17 @@ pub async fn create_application(
     ).await?;
     
     // Send confirmation email (non-blocking, log errors but don't fail request)
-    let email_service = EmailService::new();
-    if let Err(e) = email_service.send_application_received(
-        &application.email,
-        &application.name,
-        &application.experience_level,
-        &application.skills,
-    ).await {
-        tracing::error!("Failed to send application confirmation email: {}", e);
+    if let Ok(email_service) = EmailService::new() {
+        if let Err(e) = email_service.send_application_received(
+            &application.email,
+            &application.name,
+            &application.experience_level,
+            &application.skills,
+        ).await {
+            tracing::error!("Failed to send application confirmation email: {}", e);
+        }
+    } else {
+        tracing::error!("Failed to initialize EmailService");
     }
     
     Ok((StatusCode::CREATED, Json(json!({"success": true, "message": "Application submitted successfully", "data": application}))))
@@ -96,25 +99,28 @@ pub async fn review_application(
     ).await?;
     
     // Send approval/rejection email based on status
-    let email_service = EmailService::new();
-    match &payload.status {
-        crate::models::application::ApplicationStatus::Approved => {
-            if let Err(e) = email_service.send_application_approved(
-                &application.email,
-                &application.name,
-            ).await {
-                tracing::error!("Failed to send approval email: {}", e);
+    if let Ok(email_service) = EmailService::new() {
+        match &payload.status {
+            crate::models::application::ApplicationStatus::Approved => {
+                if let Err(e) = email_service.send_application_approved(
+                    &application.email,
+                    &application.name,
+                ).await {
+                    tracing::error!("Failed to send approval email: {}", e);
+                }
             }
-        }
-        crate::models::application::ApplicationStatus::Rejected => {
-            if let Err(e) = email_service.send_application_rejected(
-                &application.email,
-                &application.name,
-            ).await {
-                tracing::error!("Failed to send rejection email: {}", e);
+            crate::models::application::ApplicationStatus::Rejected => {
+                if let Err(e) = email_service.send_application_rejected(
+                    &application.email,
+                    &application.name,
+                ).await {
+                    tracing::error!("Failed to send rejection email: {}", e);
+                }
             }
+            _ => {}
         }
-        _ => {}
+    } else {
+        tracing::error!("Failed to initialize EmailService");
     }
     
     Ok(Json(json!({"success": true, "message": "Application reviewed successfully", "data": application})))

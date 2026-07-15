@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::models::event::{Event, EventType, EventStatus};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: &PgPool,
     slug: &str,
@@ -34,17 +35,7 @@ pub async fn create(
     .await
 }
 
-pub async fn find_all(pool: &PgPool) -> Result<Vec<Event>, sqlx::Error> {
-    sqlx::query_as::<_, Event>(
-        r#"
-        SELECT id, slug, title, description, date, type, status, location, created_by, created_at, updated_at
-        FROM events
-        ORDER BY date DESC
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-}
+
 
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Event>, sqlx::Error> {
     sqlx::query_as::<_, Event>(

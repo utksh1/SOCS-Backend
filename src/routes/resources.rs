@@ -1,5 +1,5 @@
 use axum::{extract::{Path, Query, State}, http::StatusCode, Extension, Json};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
@@ -60,10 +60,8 @@ pub async fn list_all_resources(
     Extension(user): Extension<SafeUser>,
     Query(mut params): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>> {
-    // Only TopLead can see all resources
-    if !user.has_role(&UserRole::TopLead) {
-        return Err(ApiError::Forbidden("Only TopLead can view all resources".to_string()));
-    }
+    // Only those who can approve content can see all resources
+    crate::middleware::auth::can_approve_content(&user)?;
     
     params.validate();
     

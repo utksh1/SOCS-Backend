@@ -1,5 +1,5 @@
 use axum::{extract::{State, Query}, Extension, Json};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
@@ -9,6 +9,7 @@ use crate::{
 };
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct DateRangeQuery {
     pub start_date: Option<String>,
     pub end_date: Option<String>,

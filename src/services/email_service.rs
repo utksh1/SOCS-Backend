@@ -1,5 +1,5 @@
 use lettre::{Message, SmtpTransport, Transport};
-use lettre::message::{header::ContentType, MultiPart, SinglePart};
+use lettre::message::{MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use std::env;
 
@@ -9,21 +9,30 @@ pub struct EmailService {
 }
 
 impl EmailService {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, crate::error::ApiError> {
         // Gmail SMTP configuration
         let smtp_host = env::var("SMTP_HOST").unwrap_or_else(|_| "smtp.gmail.com".to_string());
-        let smtp_username = env::var("SMTP_USERNAME").expect("SMTP_USERNAME (Gmail address) must be set");
-        let smtp_password = env::var("SMTP_PASSWORD").expect("SMTP_PASSWORD (Gmail app password) must be set");
+        let smtp_username = env::var("SMTP_USERNAME").map_err(|_| {
+            tracing::error!("SMTP_USERNAME (Gmail address) must be set");
+            crate::error::ApiError::InternalServerError
+        })?;
+        let smtp_password = env::var("SMTP_PASSWORD").map_err(|_| {
+            tracing::error!("SMTP_PASSWORD (Gmail app password) must be set");
+            crate::error::ApiError::InternalServerError
+        })?;
         let from_email = env::var("FROM_EMAIL").unwrap_or_else(|_| smtp_username.clone());
 
         let creds = Credentials::new(smtp_username, smtp_password);
 
         let mailer = SmtpTransport::relay(&smtp_host)
-            .unwrap()
+            .map_err(|e| {
+                tracing::error!("Failed to build SMTP transport: {:?}", e);
+                crate::error::ApiError::InternalServerError
+            })?
             .credentials(creds)
             .build();
 
-        Self { mailer, from_email }
+        Ok(Self { mailer, from_email })
     }
 
     pub async fn send_application_received(

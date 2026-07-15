@@ -7,6 +7,6 @@ pub mod notification;
 pub mod project;
 pub mod resource;
 pub mod rich_content;
-pub mod team;
+
 pub mod user;
 pub mod visual;

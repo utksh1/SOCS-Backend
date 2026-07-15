@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     Extension, Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
@@ -71,10 +71,8 @@ pub async fn list_all_projects(
     Extension(user): Extension<SafeUser>,
     Query(mut params): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>> {
-    // Only TopLead can see all projects
-    if !user.has_role(&UserRole::TopLead) {
-        return Err(ApiError::Forbidden("Only TopLead can view all projects".to_string()));
-    }
+    // Only those who can approve content can see all projects
+    crate::middleware::auth::can_approve_content(&user)?;
     
     params.validate();
     

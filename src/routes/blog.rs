@@ -1,5 +1,5 @@
 use axum::{extract::{Path, Query, State}, http::StatusCode, Extension, Json};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
@@ -67,10 +67,8 @@ pub async fn list_all_blog_posts(
     Extension(user): Extension<SafeUser>,
     Query(mut params): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>> {
-    // Only TopLead can see all posts
-    if !user.has_role(&UserRole::TopLead) {
-        return Err(ApiError::Forbidden("Only TopLead can view all blog posts".to_string()));
-    }
+    // Only those who can approve content can see all posts
+    crate::middleware::auth::can_approve_content(&user)?;
     
     params.validate();
     
@@ -174,7 +172,7 @@ pub async fn create_blog_post(
     
     let status = payload.status.unwrap_or(PostStatus::Draft);
     let published_at = if status == PostStatus::Published {
-        Some(payload.published_at.unwrap_or_else(|| Utc::now()))
+        Some(payload.published_at.unwrap_or_else(Utc::now))
     } else {
         None
     };
