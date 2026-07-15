@@ -287,7 +287,8 @@ async fn main() {
     // Build application router
     let app = Router::new()
         .route("/", axum::routing::get(|| async { "SOCS Backend (Rust)" }))
-        .route("/health", axum::routing::get(|| async { "OK" }))
+        .route("/health", axum::routing::get(routes::health::health_check))
+        .route("/health/db", axum::routing::get(routes::health::health_check_with_db))
         .nest("/api/auth", auth_routes)
         .nest("/api/projects", project_routes)
         .nest("/api/events", event_routes)

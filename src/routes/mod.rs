@@ -4,6 +4,7 @@ pub mod blog;
 pub mod contacts;
 pub mod event_registrations;
 pub mod events;
+pub mod health;
 pub mod notifications;
 pub mod projects;
 pub mod resources;
