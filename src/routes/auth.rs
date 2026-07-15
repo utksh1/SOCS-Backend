@@ -50,11 +50,47 @@ pub async fn register(
     )
     .await?;
     
+    // Get the registered user's ID to fetch full user for email
+    let user_id = result.user.id;
+    
+    // Fetch full user from database for email sending
+    if let Ok(Some(full_user)) = user_repository::find_by_id(&state.db, user_id).await {
+        // Create email service
+        if let Ok(email_service) = EmailService::new() {
+            // Send verification email (don't fail registration if email fails)
+            if let Err(e) = verification_service::send_verification_email(
+                &state.db,
+                &state.config,
+                &email_service,
+                &full_user,
+            )
+            .await
+            {
+                tracing::error!(
+                    error = ?e,
+                    user_id = %user_id,
+                    "Failed to send verification email during registration"
+                );
+                // Don't fail the registration, just log the error
+            }
+        } else {
+            tracing::error!(
+                user_id = %user_id,
+                "Failed to initialize EmailService during registration"
+            );
+        }
+    } else {
+        tracing::error!(
+            user_id = %user_id,
+            "Failed to fetch user for verification email during registration"
+        );
+    }
+    
     Ok((
         StatusCode::CREATED,
         Json(json!({
             "success": true,
-            "message": "User registered successfully",
+            "message": "User registered successfully. Please check your email to verify your account.",
             "data": result,
         })),
     ))
