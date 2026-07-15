@@ -9,6 +9,7 @@ pub struct Config {
     pub jwt_expires_in: i64,
     pub cors_origin: String,
     pub redis_url: String,
+    pub frontend_url: String,
 }
 
 impl Config {
@@ -34,6 +35,8 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:3000".to_string()),
             redis_url: std::env::var("REDIS_URL")
                 .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
+            frontend_url: std::env::var("FRONTEND_URL")
+                .unwrap_or_else(|_| "http://localhost:3000".to_string()),
         })
     }
 }

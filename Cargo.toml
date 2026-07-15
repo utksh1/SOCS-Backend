@@ -32,6 +32,10 @@ bcrypt = "0.15"
 # Validation
 validator = { version = "0.18", features = ["derive"] }
 
+# Crypto
+rand = "0.8"
+hex = "0.4"
+
 # Environment
 dotenvy = "0.15"
 

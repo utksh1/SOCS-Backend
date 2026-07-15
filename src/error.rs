@@ -17,6 +17,7 @@ pub enum ApiError {
     InternalServerError,
     ValidationError(String),
     RateLimitExceeded { retry_after: u64 },
+    TooManyRequests(String),
 }
 
 impl IntoResponse for ApiError {
@@ -47,6 +48,7 @@ impl IntoResponse for ApiError {
                     ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
                     ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
                     ApiError::ValidationError(msg) => (StatusCode::BAD_REQUEST, msg),
+                    ApiError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
                     ApiError::InternalServerError => {
                         (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
                     }
@@ -76,5 +78,12 @@ impl From<sqlx::Error> for ApiError {
 impl From<validator::ValidationErrors> for ApiError {
     fn from(errors: validator::ValidationErrors) -> Self {
         ApiError::ValidationError(errors.to_string())
+    }
+}
+
+impl From<bcrypt::BcryptError> for ApiError {
+    fn from(err: bcrypt::BcryptError) -> Self {
+        tracing::error!("Bcrypt error: {:?}", err);
+        ApiError::InternalServerError
     }
 }

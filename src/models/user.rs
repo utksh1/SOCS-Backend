@@ -46,6 +46,7 @@ pub struct User {
     #[serde(skip_serializing)]
     pub password: String,
     pub roles: Vec<UserRole>,  // Changed from single role to multiple roles
+    pub email_verified_at: Option<DateTime<Utc>>,
     pub slug: Option<String>,
     pub position: Option<String>,
     pub bio: Option<String>,
@@ -75,6 +76,7 @@ pub struct SafeUser {
     pub roles: Vec<UserRole>,  // Changed from single role to multiple roles
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<UserRole>,  // Computed field: highest role for display
+    pub email_verified_at: Option<DateTime<Utc>>,
     pub slug: Option<String>,
     pub position: Option<String>,
     pub bio: Option<String>,
@@ -115,6 +117,7 @@ impl From<User> for SafeUser {
             email: user.email,
             roles: user.roles,
             role: Some(highest),  // Set the highest role for display
+            email_verified_at: user.email_verified_at,
             slug: user.slug,
             position: user.position,
             bio: user.bio,

@@ -306,4 +306,160 @@ impl EmailService {
         self.mailer.send(&email_msg)?;
         Ok(())
     }
+
+    pub async fn send_verification_email(
+        &self,
+        to_email: &str,
+        name: &str,
+        verification_link: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let html_body = format!(
+            r#"
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {{ font-family: monospace; background: #000; color: #c8ff00; }}
+    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+    .header {{ border: 1px solid #c8ff00; padding: 20px; margin-bottom: 20px; }}
+    .content {{ line-height: 1.6; }}
+    .cta {{ background: #c8ff00; color: #000; padding: 15px 30px; text-decoration: none; display: inline-block; margin-top: 20px; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>EMAIL_VERIFICATION_REQUIRED</h1>
+    </div>
+    <div class="content">
+      <p>Hello {},</p>
+      <p>Please verify your email address to complete your registration.</p>
+      <a href="{}" class="cta">Verify Email</a>
+      <p>Or copy and paste this link into your browser:</p>
+      <p style="word-break: break-all;">{}</p>
+      <p>This link will expire in 30 minutes.</p>
+      <p>If you didn't create this account, you can safely ignore this email.</p>
+      <p>- SOCS Team</p>
+    </div>
+  </div>
+</body>
+</html>
+"#,
+            name, verification_link, verification_link
+        );
+
+        let email = Message::builder()
+            .from(self.from_email.parse()?)
+            .to(to_email.parse()?)
+            .subject("Verify Your Email - SOCS")
+            .multipart(
+                MultiPart::alternative()
+                    .singlepart(SinglePart::html(html_body))
+            )?;
+
+        self.mailer.send(&email)?;
+        Ok(())
+    }
+
+    pub async fn send_password_reset_email(
+        &self,
+        to_email: &str,
+        name: &str,
+        reset_link: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let html_body = format!(
+            r#"
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {{ font-family: monospace; background: #000; color: #c8ff00; }}
+    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+    .header {{ border: 1px solid #c8ff00; padding: 20px; margin-bottom: 20px; }}
+    .content {{ line-height: 1.6; }}
+    .cta {{ background: #c8ff00; color: #000; padding: 15px 30px; text-decoration: none; display: inline-block; margin-top: 20px; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>PASSWORD_RESET_REQUEST</h1>
+    </div>
+    <div class="content">
+      <p>Hello {},</p>
+      <p>We received a request to reset your password.</p>
+      <a href="{}" class="cta">Reset Password</a>
+      <p>Or copy and paste this link into your browser:</p>
+      <p style="word-break: break-all;">{}</p>
+      <p>This link will expire in 30 minutes.</p>
+      <p>If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.</p>
+      <p>- SOCS Team</p>
+    </div>
+  </div>
+</body>
+</html>
+"#,
+            name, reset_link, reset_link
+        );
+
+        let email = Message::builder()
+            .from(self.from_email.parse()?)
+            .to(to_email.parse()?)
+            .subject("Password Reset Request - SOCS")
+            .multipart(
+                MultiPart::alternative()
+                    .singlepart(SinglePart::html(html_body))
+            )?;
+
+        self.mailer.send(&email)?;
+        Ok(())
+    }
+
+    pub async fn send_password_reset_confirmation(
+        &self,
+        to_email: &str,
+        name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let html_body = format!(
+            r#"
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {{ font-family: monospace; background: #000; color: #c8ff00; }}
+    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+    .header {{ border: 1px solid #c8ff00; padding: 20px; margin-bottom: 20px; }}
+    .content {{ line-height: 1.6; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>PASSWORD_RESET_CONFIRMED</h1>
+    </div>
+    <div class="content">
+      <p>Hello {},</p>
+      <p>Your password has been successfully reset.</p>
+      <p>If you didn't perform this action, please contact us immediately as your account may be compromised.</p>
+      <p>- SOCS Team</p>
+    </div>
+  </div>
+</body>
+</html>
+"#,
+            name
+        );
+
+        let email = Message::builder()
+            .from(self.from_email.parse()?)
+            .to(to_email.parse()?)
+            .subject("Password Reset Confirmed - SOCS")
+            .multipart(
+                MultiPart::alternative()
+                    .singlepart(SinglePart::html(html_body))
+            )?;
+
+        self.mailer.send(&email)?;
+        Ok(())
+    }
 }

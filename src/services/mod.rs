@@ -5,3 +5,4 @@ pub mod project_service;
 pub mod event_service;
 pub mod user_service;
 pub mod cleanup_service;
+pub mod verification_service;
