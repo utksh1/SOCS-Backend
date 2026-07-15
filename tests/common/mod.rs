@@ -8,12 +8,21 @@ use tower::ServiceExt;
 
 /// Helper to make authenticated HTTP requests to the app
 pub async fn make_request(
-    app: &Router,
-    method: Method,
+    app: Router,
+    method: &str,
     path: &str,
     token: Option<&str>,
     body: Option<Value>,
 ) -> axum::response::Response {
+    let method = match method {
+        "GET" => Method::GET,
+        "POST" => Method::POST,
+        "PUT" => Method::PUT,
+        "PATCH" => Method::PATCH,
+        "DELETE" => Method::DELETE,
+        _ => panic!("Unsupported HTTP method: {}", method),
+    };
+    
     let mut request = Request::builder()
         .method(method)
         .uri(path);
@@ -31,7 +40,7 @@ pub async fn make_request(
         request.body(Body::empty()).unwrap()
     };
     
-    app.clone().oneshot(request).await.unwrap()
+    app.oneshot(request).await.unwrap()
 }
 
 /// Helper to extract JSON body from response

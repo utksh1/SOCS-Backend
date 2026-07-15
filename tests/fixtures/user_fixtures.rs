@@ -70,13 +70,13 @@ impl UserFixture {
     }
     
     /// Insert user into database and return SafeUser
-    pub async fn insert(self, pool: &PgPool) -> SafeUser {
+    pub async fn insert(self, pool: &PgPool) -> Result<SafeUser, sqlx::Error> {
         let hashed_password = hash(&self.password, DEFAULT_COST).unwrap();
         let id = Uuid::new_v4();
         let now = Utc::now();
         
-        let user = sqlx::query_as!(
-            SafeUser,
+        // Insert and get basic user data
+        let record = sqlx::query!(
             r#"
             INSERT INTO users (
                 id, email, name, password, roles, slug, position, bio, created_at, updated_at
@@ -85,7 +85,6 @@ impl UserFixture {
             RETURNING 
                 id, email, name, 
                 roles as "roles: Vec<UserRole>",
-                NULL as "role: Option<UserRole>",
                 email_verified_at,
                 slug, position, bio,
                 skills, github, linkedin, avatar_url, profile_picture,
@@ -103,10 +102,29 @@ impl UserFixture {
             now
         )
         .fetch_one(pool)
-        .await
-        .unwrap();
+        .await?;
         
-        user
+        // Construct SafeUser manually
+        let user = SafeUser {
+            id: record.id,
+            email: record.email,
+            name: record.name,
+            roles: record.roles,
+            role: None, // Computed field
+            email_verified_at: record.email_verified_at,
+            slug: record.slug,
+            position: record.position,
+            bio: record.bio,
+            skills: record.skills,
+            github: record.github,
+            linkedin: record.linkedin,
+            avatar_url: record.avatar_url,
+            profile_picture: record.profile_picture,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+        };
+        
+        Ok(user)
     }
 }
 
