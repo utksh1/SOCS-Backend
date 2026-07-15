@@ -9,4 +9,5 @@ pub mod resource;
 pub mod rich_content;
 
 pub mod user;
+pub mod verification_token;
 pub mod visual;
