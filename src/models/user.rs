@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use sqlx::postgres::{PgHasArrayType, PgTypeInfo};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
@@ -11,6 +12,12 @@ pub enum UserRole {
     Core,
     Lead,
     Member,
+}
+
+impl PgHasArrayType for UserRole {
+    fn array_type_info() -> PgTypeInfo {
+        PgTypeInfo::with_name("_user_role")
+    }
 }
 
 impl UserRole {
@@ -48,7 +55,7 @@ pub struct User {
     pub email: String,
     #[serde(skip_serializing)]
     pub password: String,
-    pub role: UserRole,
+    pub roles: Vec<UserRole>,  // Changed from single role to multiple roles
     pub slug: Option<String>,
     pub position: Option<String>,
     pub bio: Option<String>,
@@ -59,6 +66,30 @@ pub struct User {
     pub profile_picture: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl User {
+    /// Get the highest role (for display purposes)
+    pub fn highest_role(&self) -> &UserRole {
+        self.roles.iter()
+            .max_by_key(|r| r.level())
+            .unwrap_or(&UserRole::Member)
+    }
+    
+    /// Check if user has a specific role
+    pub fn has_role(&self, role: &UserRole) -> bool {
+        self.roles.contains(role)
+    }
+    
+    /// Check if user has any role at or above a certain level
+    pub fn has_role_level(&self, min_level: u8) -> bool {
+        self.roles.iter().any(|r| r.level() >= min_level)
+    }
+    
+    /// Get role level (highest role's level)
+    pub fn role_level(&self) -> u8 {
+        self.highest_role().level()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -66,7 +97,9 @@ pub struct SafeUser {
     pub id: Uuid,
     pub name: String,
     pub email: String,
-    pub role: UserRole,
+    pub roles: Vec<UserRole>,  // Changed from single role to multiple roles
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<UserRole>,  // Computed field: highest role for display
     pub slug: Option<String>,
     pub position: Option<String>,
     pub bio: Option<String>,
@@ -79,13 +112,39 @@ pub struct SafeUser {
     pub updated_at: DateTime<Utc>,
 }
 
+impl SafeUser {
+    /// Get the highest role (for display purposes)
+    pub fn highest_role(&self) -> &UserRole {
+        self.roles.iter()
+            .max_by_key(|r| r.level())
+            .unwrap_or(&UserRole::Member)
+    }
+    
+    /// Check if user has a specific role
+    pub fn has_role(&self, role: &UserRole) -> bool {
+        self.roles.contains(role)
+    }
+    
+    /// Check if user has any role at or above a certain level
+    pub fn has_role_level(&self, min_level: u8) -> bool {
+        self.roles.iter().any(|r| r.level() >= min_level)
+    }
+    
+    /// Get role level (highest role's level)
+    pub fn role_level(&self) -> u8 {
+        self.highest_role().level()
+    }
+}
+
 impl From<User> for SafeUser {
     fn from(user: User) -> Self {
+        let highest = user.highest_role().clone();
         Self {
             id: user.id,
             name: user.name,
             email: user.email,
-            role: user.role,
+            roles: user.roles,
+            role: Some(highest),  // Set the highest role for display
             slug: user.slug,
             position: user.position,
             bio: user.bio,

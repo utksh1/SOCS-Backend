@@ -31,8 +31,9 @@ pub async fn register(
     // Create user with default Member role
     let user = user_repository::create(pool, &payload.name, &payload.email, &password_hash).await?;
     
-    // Generate token
-    let token = jwt::create_token(user.id, user.role.clone(), jwt_secret, jwt_expires_in)
+    // Generate token with highest role
+    let highest_role = user.highest_role().clone();
+    let token = jwt::create_token(user.id, highest_role, jwt_secret, jwt_expires_in)
         .map_err(|_| ApiError::InternalServerError)?;
     
     Ok(AuthResponse {
@@ -60,8 +61,9 @@ pub async fn login(
         return Err(ApiError::Unauthorized("Invalid credentials".to_string()));
     }
     
-    // Generate token
-    let token = jwt::create_token(user.id, user.role.clone(), jwt_secret, jwt_expires_in)
+    // Generate token with highest role
+    let highest_role = user.highest_role().clone();
+    let token = jwt::create_token(user.id, highest_role, jwt_secret, jwt_expires_in)
         .map_err(|_| ApiError::InternalServerError)?;
     
     Ok(AuthResponse {

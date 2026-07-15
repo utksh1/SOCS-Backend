@@ -11,12 +11,9 @@ pub async fn create(
 ) -> Result<User, sqlx::Error> {
     sqlx::query_as::<_, User>(
         r#"
-        INSERT INTO users (name, email, password, role)
-        VALUES ($1, $2, $3, 'MEMBER')
-        RETURNING 
-            id, name, email, password, 
-            role, profile_picture,
-            created_at, updated_at
+        INSERT INTO users (name, email, password, roles)
+        VALUES ($1, $2, $3, ARRAY['MEMBER']::user_role[])
+        RETURNING *
         "#,
     )
     .bind(name)
@@ -28,14 +25,7 @@ pub async fn create(
 
 pub async fn find_by_email(pool: &PgPool, email: &str) -> Result<Option<User>, sqlx::Error> {
     sqlx::query_as::<_, User>(
-        r#"
-        SELECT 
-            id, name, email, password, 
-            role, profile_picture,
-            created_at, updated_at
-        FROM users 
-        WHERE email = $1
-        "#,
+        "SELECT * FROM users WHERE email = $1",
     )
     .bind(email)
     .fetch_optional(pool)
@@ -44,14 +34,7 @@ pub async fn find_by_email(pool: &PgPool, email: &str) -> Result<Option<User>, s
 
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<User>, sqlx::Error> {
     sqlx::query_as::<_, User>(
-        r#"
-        SELECT 
-            id, name, email, password, 
-            role, profile_picture,
-            created_at, updated_at
-        FROM users 
-        WHERE id = $1
-        "#,
+        "SELECT * FROM users WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool)

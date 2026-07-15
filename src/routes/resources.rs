@@ -61,7 +61,7 @@ pub async fn list_all_resources(
     Query(mut params): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>> {
     // Only TopLead can see all resources
-    if user.role != UserRole::TopLead {
+    if !user.has_role(&UserRole::TopLead) {
         return Err(ApiError::Forbidden("Only TopLead can view all resources".to_string()));
     }
     
@@ -119,7 +119,7 @@ pub async fn get_resource(
     let can_view = match &user {
         Some(u) => {
             // TopLead can see everything
-            u.role == UserRole::TopLead ||
+            u.has_role(&UserRole::TopLead) ||
             // Creator can see their own
             resource.created_by == Some(u.id) ||
             // Resource is approved (public)
@@ -160,7 +160,7 @@ pub async fn create_resource(
     payload.validate()?;
     
     // Create with pending status (TopLead can create approved directly)
-    let status = if user.role == UserRole::TopLead {
+    let status = if user.has_role(&UserRole::TopLead) {
         ContentStatus::Approved
     } else {
         ContentStatus::Pending
@@ -212,7 +212,7 @@ pub async fn update_resource(
     // Check permissions: TopLead, creator, or collaborator
     let is_creator = resource.created_by == Some(user.id);
     let is_collab = is_collaborator(&state.db, id, user.id).await?;
-    let can_edit = user.role == UserRole::TopLead || is_creator || is_collab;
+    let can_edit = user.has_role(&UserRole::TopLead) || is_creator || is_collab;
     
     if !can_edit {
         return Err(ApiError::Forbidden("You don't have permission to edit this resource".to_string()));
@@ -254,7 +254,7 @@ pub async fn delete_resource(
     
     // Check permissions: TopLead or creator
     let is_creator = resource.created_by == Some(user.id);
-    let can_delete = user.role == UserRole::TopLead || is_creator;
+    let can_delete = user.has_role(&UserRole::TopLead) || is_creator;
     
     if !can_delete {
         return Err(ApiError::Forbidden("You don't have permission to delete this resource".to_string()));
@@ -279,7 +279,7 @@ pub async fn approve_or_reject_resource(
     Json(payload): Json<ApprovalDto>,
 ) -> Result<Json<serde_json::Value>> {
     // Only TopLead can approve/reject
-    if user.role != UserRole::TopLead {
+    if !user.has_role(&UserRole::TopLead) {
         return Err(ApiError::Forbidden("Only TopLead can approve or reject resources".to_string()));
     }
     
@@ -325,7 +325,7 @@ pub async fn add_collaborator(
     
     // Check permissions: TopLead or creator
     let is_creator = resource.created_by == Some(user.id);
-    let can_add = user.role == UserRole::TopLead || is_creator;
+    let can_add = user.has_role(&UserRole::TopLead) || is_creator;
     
     if !can_add {
         return Err(ApiError::Forbidden("Only resource creator or TopLead can add collaborators".to_string()));
@@ -377,7 +377,7 @@ pub async fn remove_collaborator(
     
     // Check permissions: TopLead or creator
     let is_creator = resource.created_by == Some(user.id);
-    let can_remove = user.role == UserRole::TopLead || is_creator;
+    let can_remove = user.has_role(&UserRole::TopLead) || is_creator;
     
     if !can_remove {
         return Err(ApiError::Forbidden("Only resource creator or TopLead can remove collaborators".to_string()));

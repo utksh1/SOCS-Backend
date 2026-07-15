@@ -24,7 +24,7 @@ pub struct CreateUserDto {
     #[validate(length(min = 8))]
     pub password: String,
     
-    pub role: crate::models::user::UserRole, // TOPLEAD, MENTOR, CORE, LEAD, or MEMBER
+    pub roles: Vec<crate::models::user::UserRole>, // Multiple roles: TOPLEAD, MENTOR, CORE, LEAD, MEMBER
     
     pub position: Option<String>,
     pub bio: Option<String>,
@@ -38,7 +38,7 @@ pub struct UpdateUserDto {
     #[validate(length(min = 1, max = 255))]
     pub name: Option<String>,
     
-    pub role: Option<crate::models::user::UserRole>,
+    pub roles: Option<Vec<crate::models::user::UserRole>>,
     
     pub position: Option<String>,
     pub bio: Option<String>,
@@ -56,17 +56,26 @@ pub async fn create_user(
     payload.validate()?;
     
     // Check if creator has permission to create users
-    if !creator.role.can_create_delete_users() {
+    if !creator.highest_role().can_create_delete_users() {
         return Err(crate::error::ApiError::Forbidden(
             "Only TopLead or Mentor can create users".to_string()
         ));
     }
     
-    // Check if creator can assign the requested role
-    if !creator.role.can_manage(&payload.role) {
-        return Err(crate::error::ApiError::Forbidden(
-            format!("You cannot assign {} role", format!("{:?}", payload.role))
-        ));
+    // Ensure user has at least Member role
+    let mut roles = payload.roles;
+    if !roles.contains(&crate::models::user::UserRole::Member) {
+        roles.push(crate::models::user::UserRole::Member);
+    }
+    
+    // Check if creator can assign all requested roles
+    let creator_level = creator.role_level();
+    for role in &roles {
+        if role.level() > creator_level {
+            return Err(crate::error::ApiError::Forbidden(
+                format!("You cannot assign {:?} role", role)
+            ));
+        }
     }
     
     // Check if email already exists
@@ -83,18 +92,18 @@ pub async fn create_user(
     // Generate slug from name
     let slug = crate::utils::slugify::slugify(&payload.name);
     
-    // Create user with specified role and profile
+    // Create user with specified roles and profile
     let user = sqlx::query_as::<_, SafeUser>(
         r#"
-        INSERT INTO users (name, email, password, role, slug, position, bio, skills, github, linkedin)
+        INSERT INTO users (name, email, password, roles, slug, position, bio, skills, github, linkedin)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
+        RETURNING id, name, email, roles, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
         "#
     )
     .bind(&payload.name)
     .bind(&payload.email)
     .bind(&password_hash)
-    .bind(&payload.role)
+    .bind(&roles)
     .bind(&slug)
     .bind(&payload.position)
     .bind(&payload.bio)
@@ -106,7 +115,7 @@ pub async fn create_user(
     
     Ok(Json(json!({
         "success": true,
-        "message": format!("User created successfully with {:?} role", payload.role),
+        "message": format!("User created successfully with roles: {:?}", roles),
         "data": user
     })))
 }
@@ -126,7 +135,7 @@ pub async fn list_users(
     // Get paginated users
     let users = sqlx::query_as::<_, SafeUser>(
         r#"
-        SELECT id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
+        SELECT id, name, email, roles, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
         FROM users
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
@@ -157,7 +166,7 @@ pub async fn update_user(
     
     // Get target user
     let target_user = sqlx::query_as::<_, SafeUser>(
-        "SELECT id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at FROM users WHERE id = $1"
+        "SELECT id, name, email, roles, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at FROM users WHERE id = $1"
     )
     .bind(user_id)
     .fetch_optional(&state.db)
@@ -165,25 +174,36 @@ pub async fn update_user(
     .ok_or_else(|| crate::error::ApiError::NotFound("User not found".to_string()))?;
     
     // Check if updater has permission to update this user
-    if !updater.role.can_manage(&target_user.role) {
+    let updater_level = updater.role_level();
+    let target_level = target_user.role_level();
+    
+    if updater_level < target_level {
         return Err(crate::error::ApiError::Forbidden(
             "You don't have permission to update this user".to_string()
         ));
     }
     
-    // If updating role, check if updater can assign the new role
-    if let Some(ref new_role) = payload.role {
-        if updater.role.level() < new_role.level() {
-            return Err(crate::error::ApiError::Forbidden(
-                "You cannot assign a role higher than your own".to_string()
-            ));
+    // If updating roles, check if updater can assign all new roles
+    if let Some(ref new_roles) = payload.roles {
+        // Ensure Member role is included
+        let mut roles = new_roles.clone();
+        if !roles.contains(&crate::models::user::UserRole::Member) {
+            roles.push(crate::models::user::UserRole::Member);
+        }
+        
+        for role in &roles {
+            if role.level() > updater_level {
+                return Err(crate::error::ApiError::Forbidden(
+                    format!("You cannot assign {:?} role", role)
+                ));
+            }
         }
     }
     
-    // Prevent user from changing their own role
-    if user_id == updater.id && payload.role.is_some() {
+    // Prevent user from changing their own roles
+    if user_id == updater.id && payload.roles.is_some() {
         return Err(crate::error::ApiError::BadRequest(
-            "You cannot change your own role".to_string()
+            "You cannot change your own roles".to_string()
         ));
     }
     
@@ -195,8 +215,8 @@ pub async fn update_user(
         updates.push(format!("name = ${}", bind_count));
         bind_count += 1;
     }
-    if payload.role.is_some() {
-        updates.push(format!("role = ${}", bind_count));
+    if payload.roles.is_some() {
+        updates.push(format!("roles = ${}", bind_count));
         bind_count += 1;
     }
     if payload.position.is_some() {
@@ -227,7 +247,7 @@ pub async fn update_user(
     updates.push("updated_at = NOW()".to_string());
     
     let query_str = format!(
-        "UPDATE users SET {} WHERE id = ${} RETURNING id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at",
+        "UPDATE users SET {} WHERE id = ${} RETURNING id, name, email, roles, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at",
         updates.join(", "),
         bind_count
     );
@@ -237,8 +257,13 @@ pub async fn update_user(
     if let Some(name) = &payload.name {
         query = query.bind(name);
     }
-    if let Some(role) = &payload.role {
-        query = query.bind(role);
+    if let Some(roles) = &payload.roles {
+        // Ensure Member is included
+        let mut final_roles = roles.clone();
+        if !final_roles.contains(&crate::models::user::UserRole::Member) {
+            final_roles.push(crate::models::user::UserRole::Member);
+        }
+        query = query.bind(final_roles);
     }
     if let Some(position) = &payload.position {
         query = query.bind(position);
@@ -272,7 +297,7 @@ pub async fn get_user(
 ) -> Result<Json<serde_json::Value>> {
     let user = sqlx::query_as::<_, SafeUser>(
         r#"
-        SELECT id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
+        SELECT id, name, email, roles, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
         FROM users
         WHERE id = $1
         "#
@@ -295,7 +320,7 @@ pub async fn get_user_by_slug(
 ) -> Result<Json<serde_json::Value>> {
     let user = sqlx::query_as::<_, SafeUser>(
         r#"
-        SELECT id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
+        SELECT id, name, email, roles, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
         FROM users
         WHERE slug = $1
         "#
@@ -318,7 +343,7 @@ pub async fn delete_user(
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
     // Check if deleter has permission
-    if !deleter.role.can_create_delete_users() {
+    if !deleter.highest_role().can_create_delete_users() {
         return Err(crate::error::ApiError::Forbidden(
             "Only TopLead or Mentor can delete users".to_string()
         ));

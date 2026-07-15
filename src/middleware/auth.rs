@@ -104,7 +104,7 @@ pub async fn require_toplead(
     let user = auth_service::get_user_by_id(&state.db, user_id).await?;
     
     // Check if user has TopLead role
-    if user.role != UserRole::TopLead {
+    if !user.has_role(&UserRole::TopLead) {
         return Err(ApiError::Forbidden("TopLead access required".to_string()));
     }
     

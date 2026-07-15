@@ -72,7 +72,7 @@ pub async fn list_all_projects(
     Query(mut params): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>> {
     // Only TopLead can see all projects
-    if user.role != UserRole::TopLead {
+    if !user.has_role(&UserRole::TopLead) {
         return Err(ApiError::Forbidden("Only TopLead can view all projects".to_string()));
     }
     
@@ -131,7 +131,7 @@ pub async fn get_project(
     let can_view = match &user {
         Some(u) => {
             // TopLead can see everything
-            u.role == UserRole::TopLead ||
+            u.has_role(&UserRole::TopLead) ||
             // Creator can see their own
             project.created_by == Some(u.id) ||
             // Project is approved (public)
@@ -179,7 +179,7 @@ pub async fn create_project(
     }
     
     // Create project with pending status (TopLead can create approved directly)
-    let status = if user.role == UserRole::TopLead {
+    let status = if user.has_role(&UserRole::TopLead) {
         ContentStatus::Approved
     } else {
         ContentStatus::Pending
@@ -234,7 +234,7 @@ pub async fn update_project(
     // Check permissions: TopLead, owner, or collaborator
     let is_owner = project.created_by == Some(user.id);
     let is_collab = is_collaborator(&state.db, id, user.id).await?;
-    let can_edit = user.role == UserRole::TopLead || is_owner || is_collab;
+    let can_edit = user.has_role(&UserRole::TopLead) || is_owner || is_collab;
     
     if !can_edit {
         return Err(ApiError::Forbidden("You don't have permission to edit this project".to_string()));
@@ -272,7 +272,7 @@ pub async fn delete_project(
     
     // Check permissions: TopLead or owner
     let is_owner = project.created_by == Some(user.id);
-    let can_delete = user.role == UserRole::TopLead || is_owner;
+    let can_delete = user.has_role(&UserRole::TopLead) || is_owner;
     
     if !can_delete {
         return Err(ApiError::Forbidden("You don't have permission to delete this project".to_string()));
@@ -298,7 +298,7 @@ pub async fn approve_or_reject_project(
     Json(payload): Json<ApprovalDto>,
 ) -> Result<Json<serde_json::Value>> {
     // Only TopLead can approve/reject
-    if user.role != UserRole::TopLead {
+    if !user.has_role(&UserRole::TopLead) {
         return Err(ApiError::Forbidden("Only TopLead can approve or reject projects".to_string()));
     }
     
@@ -345,7 +345,7 @@ pub async fn add_collaborator(
     
     // Check permissions: TopLead or owner
     let is_owner = project.created_by == Some(user.id);
-    let can_add = user.role == UserRole::TopLead || is_owner;
+    let can_add = user.has_role(&UserRole::TopLead) || is_owner;
     
     if !can_add {
         return Err(ApiError::Forbidden("Only project owner or TopLead can add collaborators".to_string()));
@@ -398,7 +398,7 @@ pub async fn remove_collaborator(
     
     // Check permissions: TopLead or owner
     let is_owner = project.created_by == Some(user.id);
-    let can_remove = user.role == UserRole::TopLead || is_owner;
+    let can_remove = user.has_role(&UserRole::TopLead) || is_owner;
     
     if !can_remove {
         return Err(ApiError::Forbidden("Only project owner or TopLead can remove collaborators".to_string()));

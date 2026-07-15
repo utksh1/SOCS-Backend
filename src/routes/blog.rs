@@ -68,7 +68,7 @@ pub async fn list_all_blog_posts(
     Query(mut params): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>> {
     // Only TopLead can see all posts
-    if user.role != UserRole::TopLead {
+    if !user.has_role(&UserRole::TopLead) {
         return Err(ApiError::Forbidden("Only TopLead can view all blog posts".to_string()));
     }
     
@@ -126,7 +126,7 @@ pub async fn get_blog_post(
     let can_view = match &user {
         Some(u) => {
             // TopLead can see everything
-            u.role == UserRole::TopLead ||
+            u.has_role(&UserRole::TopLead) ||
             // Author can see their own
             post.author_id == Some(u.id) ||
             // Post is published and approved (public)
@@ -180,7 +180,7 @@ pub async fn create_blog_post(
     };
     
     // Create with pending approval status (TopLead can create approved directly)
-    let approval_status = if user.role == UserRole::TopLead {
+    let approval_status = if user.has_role(&UserRole::TopLead) {
         ContentStatus::Approved
     } else {
         ContentStatus::Pending
@@ -239,7 +239,7 @@ pub async fn update_blog_post(
     // Check permissions: TopLead, author, or collaborator
     let is_author = post.author_id == Some(user.id);
     let is_collab = is_collaborator(&state.db, id, user.id).await?;
-    let can_edit = user.role == UserRole::TopLead || is_author || is_collab;
+    let can_edit = user.has_role(&UserRole::TopLead) || is_author || is_collab;
     
     if !can_edit {
         return Err(ApiError::Forbidden("You don't have permission to edit this blog post".to_string()));
@@ -295,7 +295,7 @@ pub async fn delete_blog_post(
     
     // Check permissions: TopLead or author
     let is_author = post.author_id == Some(user.id);
-    let can_delete = user.role == UserRole::TopLead || is_author;
+    let can_delete = user.has_role(&UserRole::TopLead) || is_author;
     
     if !can_delete {
         return Err(ApiError::Forbidden("You don't have permission to delete this blog post".to_string()));
@@ -320,7 +320,7 @@ pub async fn approve_or_reject_blog_post(
     Json(payload): Json<ApprovalDto>,
 ) -> Result<Json<serde_json::Value>> {
     // Only TopLead can approve/reject
-    if user.role != UserRole::TopLead {
+    if !user.has_role(&UserRole::TopLead) {
         return Err(ApiError::Forbidden("Only TopLead can approve or reject blog posts".to_string()));
     }
     
@@ -369,7 +369,7 @@ pub async fn add_collaborator(
     
     // Check permissions: TopLead or author
     let is_author = post.author_id == Some(user.id);
-    let can_add = user.role == UserRole::TopLead || is_author;
+    let can_add = user.has_role(&UserRole::TopLead) || is_author;
     
     if !can_add {
         return Err(ApiError::Forbidden("Only post author or TopLead can add collaborators".to_string()));
@@ -424,7 +424,7 @@ pub async fn remove_collaborator(
     
     // Check permissions: TopLead or author
     let is_author = post.author_id == Some(user.id);
-    let can_remove = user.role == UserRole::TopLead || is_author;
+    let can_remove = user.has_role(&UserRole::TopLead) || is_author;
     
     if !can_remove {
         return Err(ApiError::Forbidden("Only post author or TopLead can remove collaborators".to_string()));
