@@ -126,12 +126,12 @@ pub async fn update_team_member(
         ));
     }
     
-    // Prevent updating tier to a level equal to or higher than updater's tier
+    // Prevent updating tier to a level higher than updater's tier
     if let Some(new_tier) = &payload.tier {
         if let Some(ref updater_t) = updater_tier {
-            if !updater_t.can_manage(new_tier) {
+            if updater_t.level() < new_tier.level() {
                 return Err(crate::error::ApiError::Forbidden(
-                    "You cannot assign a tier equal to or higher than your own".to_string()
+                    "You cannot assign a tier higher than your own".to_string()
                 ));
             }
         }

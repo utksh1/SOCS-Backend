@@ -27,7 +27,7 @@ impl MemberTier {
     
     /// Check if this tier can manage another tier
     pub fn can_manage(&self, other: &MemberTier) -> bool {
-        self.level() > other.level()
+        self.level() >= other.level()
     }
     
     /// Check if this tier can manage team members
