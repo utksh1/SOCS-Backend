@@ -189,3 +189,42 @@ pub async fn public_rate_limit_middleware(
 
     Ok(next.run(request).await)
 }
+
+/// Rate limit middleware for authenticated endpoints
+/// Limits: 5000 requests per minute per user
+pub async fn authenticated_rate_limit_middleware(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let config = RateLimitConfig {
+        capacity: 5000.0,
+        refill_rate: 5000.0 / 60.0, // 5000 tokens per minute
+        key_prefix: "rate_limit:user".to_string(),
+        ttl: 2 * 60, // 2 minutes
+    };
+
+    // Extract user from request extensions (set by auth middleware)
+    let user = request.extensions().get::<crate::models::user::SafeUser>()
+        .ok_or_else(|| ApiError::Unauthorized("User not authenticated".to_string()))?;
+
+    let key = format!("{}", user.id);
+
+    let mut redis = state.redis.clone();
+    
+    // Check rate limit (fail-open on Redis errors)
+    let (allowed, retry_after) = match check_rate_limit(&mut redis, &key, &config).await {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Rate limit check failed for authenticated endpoint, allowing request: {:?}", e);
+            (true, 0)
+        }
+    };
+
+    if !allowed {
+        tracing::warn!("Rate limit exceeded for user {} on authenticated endpoint, retry after {} seconds", user.id, retry_after);
+        return Err(ApiError::RateLimitExceeded { retry_after });
+    }
+
+    Ok(next.run(request).await)
+}
