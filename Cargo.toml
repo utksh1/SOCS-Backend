@@ -64,6 +64,8 @@ tokio-cron-scheduler = "0.10"
 
 [dev-dependencies]
 reqwest = { version = "0.11", features = ["json"] }
+tokio-test = "0.4"
+tower = { version = "0.4", features = ["util"] }
 
 [profile.release]
 opt-level = 3
