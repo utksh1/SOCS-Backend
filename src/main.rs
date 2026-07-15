@@ -12,6 +12,7 @@ use axum::{
     http::{header, Method},
     Router,
 };
+use redis::aio::ConnectionManager;
 use sqlx::PgPool;
 use tower_http::{
     compression::CompressionLayer,
@@ -26,6 +27,7 @@ use config::env::Config;
 pub struct AppState {
     pub db: PgPool,
     pub config: Config,
+    pub redis: ConnectionManager,
 }
 
 #[tokio::main]
@@ -51,6 +53,16 @@ async fn main() {
     
     tracing::info!("Database connection established");
     
+    // Create Redis connection manager
+    tracing::info!("Connecting to Redis...");
+    let redis_client = redis::Client::open(config.redis_url.as_str())
+        .expect("Failed to create Redis client");
+    let redis = redis_client
+        .get_connection_manager()
+        .await
+        .expect("Failed to create Redis connection manager");
+    tracing::info!("Redis connection established");
+    
     // Run migrations
     tracing::info!("Running database migrations...");
     sqlx::migrate!()
@@ -63,6 +75,7 @@ async fn main() {
     let state = AppState {
         db,
         config: config.clone(),
+        redis,
     };
     
     // Build CORS layer
