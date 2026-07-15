@@ -10,4 +10,5 @@ pub mod resource_dto;
 pub mod rich_content_dto;
 
 pub mod upload_dto;
+pub mod verification_dto;
 pub mod visual_dto;
