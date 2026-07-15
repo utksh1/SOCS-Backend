@@ -258,7 +258,7 @@ pub async fn delete_resource(
         return Err(ApiError::Forbidden("You don't have permission to delete this resource".to_string()));
     }
     
-    let deleted = resource_repository::delete(&state.db, id).await?;
+    let deleted = resource_repository::soft_delete(&state.db, id).await?;
     if !deleted {
         return Err(ApiError::NotFound("Resource not found".to_string()));
     }

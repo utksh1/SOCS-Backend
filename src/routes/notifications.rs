@@ -68,7 +68,7 @@ pub async fn delete_notification(
     Extension(user): Extension<SafeUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
-    notification_repository::delete(&state.db, id, user.id).await?;
+    notification_repository::soft_delete(&state.db, id, user.id).await?;
     
     Ok(Json(json!({
         "success": true,
@@ -177,7 +177,7 @@ pub async fn delete_announcement(
     Extension(_user): Extension<SafeUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
-    announcement_repository::delete(&state.db, id).await?;
+    announcement_repository::soft_delete(&state.db, id).await?;
     
     Ok(Json(json!({
         "success": true,

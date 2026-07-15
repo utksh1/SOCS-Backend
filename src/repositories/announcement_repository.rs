@@ -14,7 +14,7 @@ pub async fn create(
         r#"
         INSERT INTO announcements (title, content, category, pinned, author_id)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, title, content, category, pinned, author_id, created_at, updated_at
+        RETURNING id, title, content, category, pinned, author_id, created_at, updated_at, deleted_at
         "#
     )
     .bind(title)
@@ -29,8 +29,9 @@ pub async fn create(
 pub async fn find_all(pool: &PgPool) -> Result<Vec<Announcement>, sqlx::Error> {
     sqlx::query_as::<_, Announcement>(
         r#"
-        SELECT id, title, content, category, pinned, author_id, created_at, updated_at
+        SELECT id, title, content, category, pinned, author_id, created_at, updated_at, deleted_at
         FROM announcements
+        WHERE deleted_at IS NULL
         ORDER BY pinned DESC, created_at DESC
         "#
     )
@@ -41,9 +42,9 @@ pub async fn find_all(pool: &PgPool) -> Result<Vec<Announcement>, sqlx::Error> {
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Announcement>, sqlx::Error> {
     sqlx::query_as::<_, Announcement>(
         r#"
-        SELECT id, title, content, category, pinned, author_id, created_at, updated_at
+        SELECT id, title, content, category, pinned, author_id, created_at, updated_at, deleted_at
         FROM announcements
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         "#
     )
     .bind(id)
@@ -63,8 +64,8 @@ pub async fn update(
         r#"
         UPDATE announcements
         SET title = $2, content = $3, category = $4, pinned = $5, updated_at = NOW()
-        WHERE id = $1
-        RETURNING id, title, content, category, pinned, author_id, created_at, updated_at
+        WHERE id = $1 AND deleted_at IS NULL
+        RETURNING id, title, content, category, pinned, author_id, created_at, updated_at, deleted_at
         "#
     )
     .bind(id)
@@ -78,7 +79,7 @@ pub async fn update(
 
 pub async fn toggle_pin(pool: &PgPool, id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE announcements SET pinned = NOT pinned, updated_at = NOW() WHERE id = $1"
+        "UPDATE announcements SET pinned = NOT pinned, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL"
     )
     .bind(id)
     .execute(pool)
@@ -87,11 +88,30 @@ pub async fn toggle_pin(pool: &PgPool, id: Uuid) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM announcements WHERE id = $1")
+pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE announcements SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE announcements SET deleted_at = NULL WHERE id = $1"
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn permanent_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM announcements WHERE id = $1")
         .bind(id)
         .execute(pool)
         .await?;
-    
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }

@@ -34,7 +34,7 @@ pub async fn delete_visual(
     Extension(_user): Extension<SafeUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
-    let deleted = visual_repository::delete(&state.db, id).await?;
+    let deleted = visual_repository::soft_delete(&state.db, id).await?;
     if !deleted {
         return Err(crate::error::ApiError::NotFound("Visual not found".to_string()));
     }

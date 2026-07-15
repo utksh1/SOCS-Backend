@@ -11,4 +11,5 @@ pub struct EventRegistration {
     pub user_id: Option<Uuid>,
     pub attended: bool,
     pub created_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }

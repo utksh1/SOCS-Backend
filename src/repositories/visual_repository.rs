@@ -15,7 +15,7 @@ pub async fn create(
         r#"
         INSERT INTO visuals (title, category, src, alt_text, created_by)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, title, category, src, alt_text, created_by, created_at, updated_at
+        RETURNING id, title, category, src, alt_text, created_by, created_at, updated_at, deleted_at
         "#,
     )
     .bind(title)
@@ -30,8 +30,9 @@ pub async fn create(
 pub async fn find_all(pool: &PgPool) -> Result<Vec<Visual>, sqlx::Error> {
     sqlx::query_as::<_, Visual>(
         r#"
-        SELECT id, title, category, src, alt_text, created_by, created_at, updated_at
+        SELECT id, title, category, src, alt_text, created_by, created_at, updated_at, deleted_at
         FROM visuals
+        WHERE deleted_at IS NULL
         ORDER BY created_at DESC
         "#,
     )
@@ -42,9 +43,9 @@ pub async fn find_all(pool: &PgPool) -> Result<Vec<Visual>, sqlx::Error> {
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Visual>, sqlx::Error> {
     sqlx::query_as::<_, Visual>(
         r#"
-        SELECT id, title, category, src, alt_text, created_by, created_at, updated_at
+        SELECT id, title, category, src, alt_text, created_by, created_at, updated_at, deleted_at
         FROM visuals
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         "#,
     )
     .bind(id)
@@ -52,11 +53,30 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Visual>, sqlx:
     .await
 }
 
-pub async fn delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE visuals SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE visuals SET deleted_at = NULL WHERE id = $1"
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn permanent_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM visuals WHERE id = $1")
         .bind(id)
         .execute(pool)
         .await?;
-    
     Ok(result.rows_affected() > 0)
 }

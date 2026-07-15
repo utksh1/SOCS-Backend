@@ -14,6 +14,7 @@ pub struct Notification {
     pub link: Option<String>,
     pub read: bool,
     pub created_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
@@ -26,4 +27,5 @@ pub struct Announcement {
     pub author_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }

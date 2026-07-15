@@ -299,7 +299,7 @@ pub async fn delete_blog_post(
         return Err(ApiError::Forbidden("You don't have permission to delete this blog post".to_string()));
     }
     
-    let deleted = blog_post_repository::delete(&state.db, id).await?;
+    let deleted = blog_post_repository::soft_delete(&state.db, id).await?;
     if !deleted {
         return Err(ApiError::NotFound("Blog post not found".to_string()));
     }

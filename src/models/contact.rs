@@ -11,4 +11,5 @@ pub struct Contact {
     pub message: String,
     pub replied: bool,
     pub created_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
