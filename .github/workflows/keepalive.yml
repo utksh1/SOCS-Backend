@@ -1,0 +1,42 @@
+name: Database Keepalive
+
+# Run every 10 days to prevent Render's 30-day inactivity deletion
+on:
+  schedule:
+    - cron: '0 0 */10 * *'  # Every 10 days at midnight UTC
+  workflow_dispatch:  # Allow manual trigger from GitHub Actions tab
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Ping health endpoint with database write
+        run: |
+          echo "🏓 Pinging keepalive endpoint..."
+          response=$(curl -s -w "\n%{http_code}" https://socs-backend.onrender.com/health/db)
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+          
+          if [ "$http_code" -eq 200 ]; then
+            echo "✅ Keepalive successful!"
+            echo "$body" | jq '.'
+          else
+            echo "❌ Keepalive failed with status $http_code"
+            exit 1
+          fi
+      
+      - name: Log keepalive activity
+        if: success()
+        run: |
+          echo "✅ Database keepalive completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Next scheduled run: $(date -u -d '+10 days' '+%Y-%m-%d %H:%M:%S UTC')"
+      
+      - name: Alert on failure
+        if: failure()
+        run: |
+          echo "⚠️ Keepalive failed! Check service status at https://dashboard.render.com"
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
