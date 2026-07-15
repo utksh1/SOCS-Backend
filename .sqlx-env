@@ -1,0 +1,3 @@
+# SQLx offline mode - set this during development if DB not available
+# To regenerate: cargo sqlx prepare
+SQLX_OFFLINE=true
