@@ -18,6 +18,8 @@ sqlx = { version = "0.7", features = [
     "json",
     "migrate"
 ] }
+# Redis client with async support
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
