@@ -12,6 +12,10 @@
 - **🦀 Rust-Powered**: Type-safe, memory-safe, and blazingly fast
 - **⚡ 120+ API Endpoints**: Complete REST API for all platform features
 - **🔐 JWT Authentication**: Secure token-based authentication with bcrypt
+- **🛡️ Rate Limiting**: Redis-backed token bucket algorithm protects against brute-force and DDoS
+  - Auth endpoints: 20 req/15min per IP
+  - Public endpoints: 500 req/min per IP
+  - Authenticated: 5000 req/min per user
 - **👥 5-Tier Role System**: TopLead > Mentor > Core > Lead > Member
 - **✅ Approval Workflow**: Content submission & approval system for all members
 - **🤝 Collaborator System**: Multi-user collaboration on projects, blogs, and resources
@@ -45,11 +49,19 @@ Before you begin, ensure you have the following installed:
 
 - **[Rust](https://www.rust-lang.org/tools/install)** 1.70 or higher
 - **[PostgreSQL](https://www.postgresql.org/download/)** 14 or higher
+- **[Redis](https://redis.io/download/)** 6 or higher
 - **[SQLx CLI](https://github.com/launchbadge/sqlx/tree/main/sqlx-cli)** for migrations
 
 ```bash
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install PostgreSQL (platform-specific)
+# See https://www.postgresql.org/download/
+
+# Install Redis
+brew install redis  # macOS
+# sudo apt-get install redis  # Ubuntu
 
 # Install SQLx CLI
 cargo install sqlx-cli --no-default-features --features postgres
@@ -57,6 +69,7 @@ cargo install sqlx-cli --no-default-features --features postgres
 # Verify installations
 rustc --version
 psql --version
+redis-server --version
 sqlx --version
 ```
 
@@ -116,6 +129,11 @@ Create a `.env` file with the following variables:
 # DATABASE
 # ============================================
 DATABASE_URL=postgresql://localhost:5432/socs
+
+# ============================================
+# REDIS (Rate Limiting)
+# ============================================
+REDIS_URL=redis://localhost:6379
 
 # ============================================
 # JWT AUTHENTICATION
@@ -200,6 +218,35 @@ VALUES (
   'TOPLEAD'
 );
 ```
+
+## 🔴 Redis Setup
+
+Redis is required for rate limiting functionality.
+
+### Local Development
+
+```bash
+# Start Redis locally
+redis-server
+
+# Verify Redis is running
+redis-cli ping  # Should return "PONG"
+
+# Check Redis status
+redis-cli info server
+```
+
+### Production Deployment
+
+For production, use a managed Redis service:
+
+- **[Render](https://render.com)**: Add Redis instance via dashboard, get connection URL
+- **[Railway](https://railway.app)**: Redis plugin available
+- **[Upstash](https://upstash.com)**: Serverless Redis with generous free tier
+- **[AWS ElastiCache](https://aws.amazon.com/elasticache/)**: Managed Redis for AWS
+- **[Redis Cloud](https://redis.com/cloud/)**: Official managed Redis service
+
+Update your `.env` with the Redis connection URL from your provider.
 
 ## 🏃 Running the Server
 
