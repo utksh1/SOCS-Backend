@@ -113,14 +113,18 @@ async fn main() {
         .layer(auth_rate_limit.clone())
         .layer(toplead_layer.clone());
     
-    // Login route (auth rate limit only)
-    let auth_login = Router::new()
+    // Login and public verification routes (auth rate limit only)
+    let auth_public = Router::new()
         .route("/login", axum::routing::post(routes::auth::login))
+        .route("/verify-email", axum::routing::get(routes::auth::verify_email))
+        .route("/forgot-password", axum::routing::post(routes::auth::forgot_password))
+        .route("/reset-password", axum::routing::post(routes::auth::reset_password))
         .layer(auth_rate_limit.clone());
     
-    // Change password route (auth rate limit + auth required)
-    let auth_change_password = Router::new()
+    // Change password and resend verification routes (auth rate limit + auth required)
+    let auth_sensitive = Router::new()
         .route("/change-password", axum::routing::patch(routes::auth::change_password))
+        .route("/resend-verification", axum::routing::post(routes::auth::resend_verification))
         .layer(auth_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -132,8 +136,8 @@ async fn main() {
         .layer(auth_layer.clone());
     
     let auth_routes = auth_register
-        .merge(auth_login)
-        .merge(auth_change_password)
+        .merge(auth_public)
+        .merge(auth_sensitive)
         .merge(auth_protected);
     
     // Build project routes (GET public for approved, POST/PUT/DELETE protected with approval workflow)

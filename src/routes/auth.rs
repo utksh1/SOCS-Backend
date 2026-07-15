@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     Extension, Json,
 };
@@ -8,10 +8,13 @@ use serde_json::json;
 use validator::Validate;
 
 use crate::{
-    dto::auth_dto::{LoginDto, RegisterDto},
+    dto::{
+        auth_dto::{LoginDto, RegisterDto},
+        verification_dto::{ForgotPasswordDto, ResetPasswordDto, VerificationResponse},
+    },
     error::Result,
     models::user::SafeUser,
-    services::auth_service,
+    services::{auth_service, email_service::EmailService, verification_service},
     repositories::user_repository,
     AppState,
 };
@@ -142,4 +145,118 @@ pub async fn change_password(
         "success": true,
         "message": "Password changed successfully"
     })))
+}
+
+/// Resend verification email to authenticated user
+pub async fn resend_verification(
+    State(state): State<AppState>,
+    Extension(user): Extension<SafeUser>,
+) -> Result<Json<VerificationResponse>> {
+    // Check if already verified
+    if user.email_verified_at.is_some() {
+        return Ok(Json(VerificationResponse::error("Email already verified")));
+    }
+
+    // Fetch full user from database
+    let full_user = user_repository::find_by_id(&state.db, user.id)
+        .await?
+        .ok_or_else(|| crate::error::ApiError::NotFound("User not found".to_string()))?;
+
+    // Create email service
+    let email_service = EmailService::new()
+        .map_err(|_| {
+            tracing::error!("Failed to initialize EmailService");
+            crate::error::ApiError::InternalServerError
+        })?;
+
+    // Send verification email
+    verification_service::send_verification_email(
+        &state.db,
+        &state.config,
+        &email_service,
+        &full_user,
+    )
+    .await?;
+
+    Ok(Json(VerificationResponse::success(
+        "Verification email sent. Please check your inbox."
+    )))
+}
+
+/// Verify email with token from query parameter
+pub async fn verify_email(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<VerificationResponse>> {
+    let token = params
+        .get("token")
+        .ok_or_else(|| crate::error::ApiError::BadRequest("Token parameter required".to_string()))?;
+
+    // Validate token length
+    if token.len() != 64 {
+        return Err(crate::error::ApiError::BadRequest("Invalid token format".to_string()));
+    }
+
+    // Verify the token
+    verification_service::verify_email_token(&state.db, token).await?;
+
+    Ok(Json(VerificationResponse::success(
+        "Email verified successfully!"
+    )))
+}
+
+/// Request password reset email
+pub async fn forgot_password(
+    State(state): State<AppState>,
+    Json(payload): Json<ForgotPasswordDto>,
+) -> Result<Json<VerificationResponse>> {
+    payload.validate()?;
+
+    // Create email service
+    let email_service = EmailService::new()
+        .map_err(|_| {
+            tracing::error!("Failed to initialize EmailService");
+            crate::error::ApiError::InternalServerError
+        })?;
+
+    // Send password reset email (always returns success to prevent email enumeration)
+    verification_service::send_password_reset_email(
+        &state.db,
+        &state.config,
+        &email_service,
+        &payload.email,
+    )
+    .await?;
+
+    Ok(Json(VerificationResponse::success(
+        "If that email exists, you'll receive a password reset link shortly."
+    )))
+}
+
+/// Reset password with token
+pub async fn reset_password(
+    State(state): State<AppState>,
+    Json(payload): Json<ResetPasswordDto>,
+) -> Result<Json<VerificationResponse>> {
+    payload.validate()?;
+
+    // Create email service
+    let email_service = EmailService::new()
+        .map_err(|_| {
+            tracing::error!("Failed to initialize EmailService");
+            crate::error::ApiError::InternalServerError
+        })?;
+
+    // Reset the password
+    verification_service::reset_password_with_token(
+        &state.db,
+        &email_service,
+        &payload.token,
+        &payload.new_password,
+    )
+    .await?;
+
+    Ok(Json(VerificationResponse::success(
+        "Password reset successfully. You can now log in with your new password."
+    )))
 }
