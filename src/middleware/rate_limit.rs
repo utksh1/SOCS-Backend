@@ -1,13 +1,8 @@
-use axum::{
-    extract::{Request, State},
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
-};
+use axum::extract::Request;
 use redis::AsyncCommands;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{error::ApiError, AppState};
+use crate::error::ApiError;
 
 /// Rate limit configuration
 #[derive(Debug, Clone)]
@@ -30,22 +25,30 @@ struct TokenBucket {
 }
 
 /// Check rate limit and consume a token if available
-async fn check_rate_limit(
+pub async fn check_rate_limit(
     redis: &mut redis::aio::ConnectionManager,
     key: &str,
     config: &RateLimitConfig,
 ) -> Result<(bool, u64), ApiError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("System time should be after UNIX_EPOCH")
         .as_secs() as i64;
 
     // Get current bucket state from Redis
-    let tokens_key = format!("{}:tokens", key);
-    let last_refill_key = format!("{}:last_refill", key);
+    let tokens_key = format!("{}:{}:tokens", config.key_prefix, key);
+    let last_refill_key = format!("{}:{}:last_refill", config.key_prefix, key);
 
-    let tokens: Option<f64> = redis.get(&tokens_key).await.unwrap_or(None);
-    let last_refill: Option<i64> = redis.get(&last_refill_key).await.unwrap_or(None);
+    let tokens: Option<f64> = redis.get(&tokens_key).await
+        .map_err(|e| {
+            tracing::error!("Failed to get tokens from Redis: {}", e);
+            ApiError::InternalServerError
+        })?;
+    let last_refill: Option<i64> = redis.get(&last_refill_key).await
+        .map_err(|e| {
+            tracing::error!("Failed to get last_refill from Redis: {}", e);
+            ApiError::InternalServerError
+        })?;
 
     // Initialize or calculate new token count
     let (mut current_tokens, last_refill_time) = match (tokens, last_refill) {
@@ -66,15 +69,17 @@ async fn check_rate_limit(
         // Consume one token
         current_tokens -= 1.0;
 
-        // Update Redis
-        let _: () = redis.set_ex(&tokens_key, current_tokens, config.ttl).await
-            .unwrap_or_else(|e| {
+        // Update Redis with explicit type annotations
+        redis.set_ex::<_, _, ()>(&tokens_key, current_tokens, config.ttl).await
+            .map_err(|e| {
                 tracing::error!("Failed to update Redis tokens: {}", e);
-            });
-        let _: () = redis.set_ex(&last_refill_key, last_refill_time, config.ttl).await
-            .unwrap_or_else(|e| {
+                ApiError::InternalServerError
+            })?;
+        redis.set_ex::<_, _, ()>(&last_refill_key, last_refill_time, config.ttl).await
+            .map_err(|e| {
                 tracing::error!("Failed to update Redis last_refill: {}", e);
-            });
+                ApiError::InternalServerError
+            })?;
 
         Ok((true, 0)) // Allowed
     } else {
@@ -87,7 +92,7 @@ async fn check_rate_limit(
 }
 
 /// Extract client IP address from request headers
-fn extract_ip(request: &Request) -> String {
+pub fn extract_ip(request: &Request) -> String {
     // Check X-Forwarded-For header
     if let Some(forwarded) = request.headers().get("x-forwarded-for") {
         if let Ok(forwarded_str) = forwarded.to_str() {
