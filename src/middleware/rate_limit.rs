@@ -1,8 +1,13 @@
-use axum::extract::Request;
+use axum::{
+    extract::{Request, State},
+    middleware::Next,
+    response::Response,
+};
 use redis::AsyncCommands;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::ApiError;
+use crate::AppState;
 
 /// Rate limit configuration
 #[derive(Debug, Clone)]
@@ -111,4 +116,40 @@ pub fn extract_ip(request: &Request) -> String {
 
     // Fallback
     "unknown".to_string()
+}
+
+/// Rate limit middleware for authentication endpoints (login, register, password)
+/// Limits: 20 requests per 15 minutes per IP
+pub async fn auth_rate_limit_middleware(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let config = RateLimitConfig {
+        capacity: 20.0,
+        refill_rate: 20.0 / (15.0 * 60.0), // 20 tokens per 15 minutes
+        key_prefix: "rate_limit:auth:ip".to_string(),
+        ttl: 30 * 60, // 30 minutes
+    };
+
+    let ip = extract_ip(&request);
+    let key = format!("{}", ip);
+
+    let mut redis = state.redis.clone();
+    
+    // Check rate limit (fail-open on Redis errors)
+    let (allowed, retry_after) = match check_rate_limit(&mut redis, &key, &config).await {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Rate limit check failed for auth endpoint, allowing request: {:?}", e);
+            (true, 0)
+        }
+    };
+
+    if !allowed {
+        tracing::warn!("Rate limit exceeded for IP {} on auth endpoint, retry after {} seconds", ip, retry_after);
+        return Err(ApiError::RateLimitExceeded { retry_after });
+    }
+
+    Ok(next.run(request).await)
 }
