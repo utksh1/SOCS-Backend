@@ -118,7 +118,7 @@ async fn main() {
     
     let event_routes = event_public.merge(event_protected);
     
-    // Build team routes (GET public, POST/DELETE protected)
+    // Build team routes (GET public, POST/PUT/DELETE admin only)
     let team_public = Router::new()
         .route("/", axum::routing::get(routes::team::list_team))
         .route("/slug/:slug", axum::routing::get(routes::team::get_team_member_by_slug))
@@ -126,8 +126,9 @@ async fn main() {
     
     let team_protected = Router::new()
         .route("/", axum::routing::post(routes::team::create_team_member))
-        .route("/:id", axum::routing::delete(routes::team::delete_team_member))
-        .layer(auth_layer.clone());
+        .route("/:id", axum::routing::put(routes::team::update_team_member)
+            .delete(routes::team::delete_team_member))
+        .layer(admin_layer.clone());
     
     let team_routes = team_public.merge(team_protected);
     

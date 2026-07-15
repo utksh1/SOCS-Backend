@@ -66,9 +66,6 @@ pub async fn create_team_member(
     Extension(user): Extension<SafeUser>,
     Json(payload): Json<CreateTeamMemberDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
-    // Check permission
-    crate::middleware::auth::check_team_permission(&user.role)?;
-    
     payload.validate()?;
     let slug = payload.slug.clone().unwrap_or_else(|| slugify(&payload.name));
     
@@ -81,14 +78,52 @@ pub async fn create_team_member(
     Ok((StatusCode::CREATED, Json(json!({"success": true, "message": "Team member created", "data": member}))))
 }
 
+pub async fn update_team_member(
+    State(state): State<AppState>,
+    Extension(_user): Extension<SafeUser>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<CreateTeamMemberDto>,
+) -> Result<Json<serde_json::Value>> {
+    payload.validate()?;
+    
+    // Check if member exists
+    let existing = team_repository::find_by_id(&state.db, id).await?
+        .ok_or_else(|| crate::error::ApiError::NotFound("Team member not found".to_string()))?;
+    
+    let slug = payload.slug.clone().unwrap_or_else(|| slugify(&payload.name));
+    
+    // Update team member
+    let member: crate::models::team::TeamMember = sqlx::query_as(
+        r#"
+        UPDATE team
+        SET slug = $1, name = $2, role = $3, bio = $4, skills = $5, tier = $6,
+            github = $7, linkedin = $8, avatar_url = $9, updated_at = NOW()
+        WHERE id = $10
+        RETURNING id, slug, name, role, bio, skills, tier, github, linkedin,
+                  avatar_url, created_by, created_at, updated_at
+        "#
+    )
+    .bind(&slug)
+    .bind(&payload.name)
+    .bind(&payload.role)
+    .bind(&payload.bio)
+    .bind(&payload.skills)
+    .bind(payload.tier.unwrap_or(existing.tier))
+    .bind(&payload.github)
+    .bind(&payload.linkedin)
+    .bind(&payload.avatar_url)
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+    
+    Ok(Json(json!({"success": true, "message": "Team member updated", "data": member})))
+}
+
 pub async fn delete_team_member(
     State(state): State<AppState>,
-    Extension(user): Extension<SafeUser>,
+    Extension(_user): Extension<SafeUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
-    // Check permission
-    crate::middleware::auth::check_team_permission(&user.role)?;
-    
     let deleted = team_repository::delete(&state.db, id).await?;
     if !deleted {
         return Err(crate::error::ApiError::NotFound("Team member not found".to_string()));

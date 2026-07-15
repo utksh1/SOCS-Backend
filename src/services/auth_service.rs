@@ -31,6 +31,26 @@ pub async fn register(
     // Create user
     let user = user_repository::create(pool, &payload.name, &payload.email, &password_hash).await?;
     
+    // Automatically add user to team table with default values
+    let slug = crate::utils::slugify::slugify(&user.name);
+    sqlx::query(
+        r#"
+        INSERT INTO team (slug, name, role, skills, tier, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (slug) DO UPDATE SET
+            name = EXCLUDED.name,
+            updated_at = NOW()
+        "#
+    )
+    .bind(&slug)
+    .bind(&user.name)
+    .bind("Member") // Default role
+    .bind(&[] as &[String]) // Empty skills array
+    .bind("member") // Default tier
+    .bind(user.id)
+    .execute(pool)
+    .await?;
+    
     // Generate token
     let token = jwt::create_token(user.id, user.role.clone(), jwt_secret, jwt_expires_in)
         .map_err(|_| ApiError::InternalServerError)?;
