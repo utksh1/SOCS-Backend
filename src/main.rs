@@ -81,10 +81,11 @@ async fn main() {
     
     // Auth middleware
     let auth_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::auth_middleware);
+    let admin_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::require_admin);
     
     // Build auth routes
     let auth_routes = Router::new()
-        .route("/register", axum::routing::post(routes::auth::register))
+        .route("/register", axum::routing::post(routes::auth::register).layer(admin_layer.clone()))
         .route("/login", axum::routing::post(routes::auth::login))
         .route("/me", axum::routing::get(routes::auth::get_me).layer(auth_layer.clone()))
         .route("/update-name", axum::routing::patch(routes::auth::update_name).layer(auth_layer.clone()))

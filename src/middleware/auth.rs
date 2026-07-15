@@ -51,19 +51,36 @@ pub async fn require_admin(
     mut request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
-    let auth_result = auth_middleware(State(state), request, next).await?;
+    // Extract token from Authorization header
+    let auth_header = request
+        .headers()
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+        .ok_or_else(|| ApiError::Unauthorized("Missing authorization header".to_string()))?;
+    
+    let token = auth_header
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| ApiError::Unauthorized("Invalid authorization header".to_string()))?;
+    
+    // Verify token
+    let claims = jwt::verify_token(token, &state.config.jwt_secret)
+        .map_err(|_| ApiError::Unauthorized("Invalid token".to_string()))?;
+    
+    // Get user from database
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| ApiError::Unauthorized("Invalid user ID".to_string()))?;
+    
+    let user = auth_service::get_user_by_id(&state.db, user_id).await?;
     
     // Check if user has admin role
-    let user = auth_result
-        .extensions()
-        .get::<crate::models::user::SafeUser>()
-        .ok_or_else(|| ApiError::Unauthorized("User not found".to_string()))?;
-    
-    if !user.role.is_admin() {
+    if user.role != UserRole::Admin {
         return Err(ApiError::Forbidden("Admin access required".to_string()));
     }
     
-    Ok(auth_result)
+    // Insert user into request extensions
+    request.extensions_mut().insert(user);
+    
+    Ok(next.run(request).await)
 }
 
 // Permission check helpers
