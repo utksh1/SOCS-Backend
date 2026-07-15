@@ -67,6 +67,26 @@ pub async fn create_team_member(
     Json(payload): Json<CreateTeamMemberDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     payload.validate()?;
+    
+    // Get the creator's tier from team table (if they exist in team)
+    let creator_tier: Option<crate::models::team::MemberTier> = sqlx::query_scalar(
+        "SELECT tier FROM team WHERE created_by = $1 LIMIT 1"
+    )
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await?;
+    
+    // Check if user has permission to create members
+    // Admin always has permission, or if they're TopLead/Mentor in the team
+    let has_permission = user.role == crate::models::user::UserRole::Admin 
+        || creator_tier.as_ref().map(|t| t.can_create_delete_members()).unwrap_or(false);
+    
+    if !has_permission {
+        return Err(crate::error::ApiError::Forbidden(
+            "Only TopLead or Mentor tier members can create team members".to_string()
+        ));
+    }
+    
     let slug = payload.slug.clone().unwrap_or_else(|| slugify(&payload.name));
     
     let member = team_repository::create(
@@ -80,15 +100,48 @@ pub async fn create_team_member(
 
 pub async fn update_team_member(
     State(state): State<AppState>,
-    Extension(_user): Extension<SafeUser>,
+    Extension(user): Extension<SafeUser>,
     Path(id): Path<Uuid>,
     Json(payload): Json<CreateTeamMemberDto>,
 ) -> Result<Json<serde_json::Value>> {
     payload.validate()?;
     
-    // Check if member exists
+    // Check if member exists and get their current tier
     let existing = team_repository::find_by_id(&state.db, id).await?
         .ok_or_else(|| crate::error::ApiError::NotFound("Team member not found".to_string()))?;
+    
+    // Get the updater's tier from team table
+    let updater_tier: Option<crate::models::team::MemberTier> = sqlx::query_scalar(
+        "SELECT tier FROM team WHERE created_by = $1 LIMIT 1"
+    )
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await?;
+    
+    // Check permissions:
+    // 1. Admin can update anyone
+    // 2. TopLead/Mentor/Core can update members below their tier
+    let has_permission = user.role == crate::models::user::UserRole::Admin 
+        || updater_tier.as_ref().map(|t| t.can_manage(&existing.tier)).unwrap_or(false);
+    
+    if !has_permission {
+        return Err(crate::error::ApiError::Forbidden(
+            "You don't have permission to update this team member".to_string()
+        ));
+    }
+    
+    // Prevent updating tier to a level higher than updater's tier (unless admin)
+    if let Some(new_tier) = &payload.tier {
+        if user.role != crate::models::user::UserRole::Admin {
+            if let Some(ref updater_t) = updater_tier {
+                if !updater_t.can_manage(new_tier) {
+                    return Err(crate::error::ApiError::Forbidden(
+                        "You cannot assign a tier equal to or higher than your own".to_string()
+                    ));
+                }
+            }
+        }
+    }
     
     let slug = payload.slug.clone().unwrap_or_else(|| slugify(&payload.name));
     
@@ -121,9 +174,33 @@ pub async fn update_team_member(
 
 pub async fn delete_team_member(
     State(state): State<AppState>,
-    Extension(_user): Extension<SafeUser>,
+    Extension(user): Extension<SafeUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
+    // Check if member exists and get their tier
+    let existing = team_repository::find_by_id(&state.db, id).await?
+        .ok_or_else(|| crate::error::ApiError::NotFound("Team member not found".to_string()))?;
+    
+    // Get the deleter's tier from team table
+    let deleter_tier: Option<crate::models::team::MemberTier> = sqlx::query_scalar(
+        "SELECT tier FROM team WHERE created_by = $1 LIMIT 1"
+    )
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await?;
+    
+    // Check permissions:
+    // 1. Admin can delete anyone
+    // 2. TopLead/Mentor can delete members
+    let has_permission = user.role == crate::models::user::UserRole::Admin 
+        || deleter_tier.as_ref().map(|t| t.can_create_delete_members()).unwrap_or(false);
+    
+    if !has_permission {
+        return Err(crate::error::ApiError::Forbidden(
+            "Only TopLead or Mentor tier members can delete team members".to_string()
+        ));
+    }
+    
     let deleted = team_repository::delete(&state.db, id).await?;
     if !deleted {
         return Err(crate::error::ApiError::NotFound("Team member not found".to_string()));
