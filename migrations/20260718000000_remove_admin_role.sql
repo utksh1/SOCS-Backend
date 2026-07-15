@@ -1,8 +1,14 @@
--- Remove ADMIN role from user_role enum
--- First, update existing admin users to MANAGEMENT
-UPDATE users SET role = 'MANAGEMENT' WHERE role = 'ADMIN';
+-- Complete cleanup: Remove all granular roles and keep only MEMBER and MANAGEMENT
+-- Update all users to use only these two roles
 
--- Create new enum without ADMIN
+-- First, migrate existing users to appropriate roles
+UPDATE users SET role = 'MANAGEMENT' 
+WHERE role IN ('ADMIN', 'EVENT_ORGANIZER', 'BLOG_EDITOR', 'RESOURCE_MANAGER', 'TEAM_LEAD');
+
+UPDATE users SET role = 'MEMBER' 
+WHERE role NOT IN ('MEMBER', 'MANAGEMENT');
+
+-- Create new simplified enum with only MEMBER and MANAGEMENT
 CREATE TYPE user_role_new AS ENUM ('MEMBER', 'MANAGEMENT');
 
 -- Update the table to use new enum
@@ -13,3 +19,4 @@ ALTER TABLE users
 -- Drop old enum and rename new one
 DROP TYPE user_role;
 ALTER TYPE user_role_new RENAME TO user_role;
+

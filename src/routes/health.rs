@@ -1,6 +1,5 @@
 use axum::{extract::State, Json};
 use serde_json::{json, Value};
-use sqlx::PgPool;
 
 use crate::AppState;
 
@@ -73,11 +72,6 @@ pub async fn health_check_with_db(State(state): State<AppState>) -> Json<Value> 
             "timestamp": chrono::Utc::now().to_rfc3339()
         })),
     }
-}
-
-/// Simple health check without database access
-pub async fn health_check() -> &'static str {
-    "OK"
 }
 
 /// Simple health check without database access

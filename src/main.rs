@@ -81,6 +81,7 @@ async fn main() {
     
     // Auth middleware
     let auth_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::auth_middleware);
+    let optional_auth_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::optional_auth_middleware);
     let toplead_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::require_toplead);
     
     // Build auth routes
@@ -91,15 +92,21 @@ async fn main() {
         .route("/update-name", axum::routing::patch(routes::auth::update_name).layer(auth_layer.clone()))
         .route("/change-password", axum::routing::patch(routes::auth::change_password).layer(auth_layer.clone()));
     
-    // Build project routes (GET public, POST/PUT/DELETE protected)
+    // Build project routes (GET public for approved, POST/PUT/DELETE protected with approval workflow)
     let project_public = Router::new()
         .route("/", axum::routing::get(routes::projects::list_projects))
-        .route("/:id", axum::routing::get(routes::projects::get_project));
+        .route("/:id", axum::routing::get(routes::projects::get_project))
+        .layer(optional_auth_layer.clone());
     
     let project_protected = Router::new()
         .route("/", axum::routing::post(routes::projects::create_project))
+        .route("/all", axum::routing::get(routes::projects::list_all_projects))
+        .route("/my", axum::routing::get(routes::projects::list_my_projects))
         .route("/:id", axum::routing::put(routes::projects::update_project)
             .delete(routes::projects::delete_project))
+        .route("/:id/approve", axum::routing::post(routes::projects::approve_or_reject_project))
+        .route("/:id/collaborators", axum::routing::post(routes::projects::add_collaborator))
+        .route("/:id/collaborators/:user_id", axum::routing::delete(routes::projects::remove_collaborator))
         .layer(auth_layer.clone());
     
     let project_routes = project_public.merge(project_protected);
@@ -118,28 +125,35 @@ async fn main() {
     
     let event_routes = event_public.merge(event_protected);
     
-    // Build team routes (GET public, POST/PUT/DELETE admin only)
-    let team_public = Router::new()
-        .route("/", axum::routing::get(routes::team::list_team))
-        .route("/slug/:slug", axum::routing::get(routes::team::get_team_member_by_slug))
-        .route("/:id", axum::routing::get(routes::team::get_team_member));
+    // Build user routes (GET public, POST/PUT/DELETE requires auth with role-based permissions)
+    let user_public = Router::new()
+        .route("/", axum::routing::get(routes::users::list_users))
+        .route("/slug/:slug", axum::routing::get(routes::users::get_user_by_slug))
+        .route("/:id", axum::routing::get(routes::users::get_user));
     
-    let team_protected = Router::new()
-        .route("/", axum::routing::post(routes::team::create_team_member))
-        .route("/:id", axum::routing::put(routes::team::update_team_member)
-            .delete(routes::team::delete_team_member))
+    let user_protected = Router::new()
+        .route("/", axum::routing::post(routes::users::create_user))
+        .route("/:id", axum::routing::put(routes::users::update_user)
+            .delete(routes::users::delete_user))
         .layer(auth_layer.clone());
     
-    let team_routes = team_public.merge(team_protected);
+    let user_routes = user_public.merge(user_protected);
     
-    // Build resource routes (GET public, POST/DELETE protected)
+    // Build resource routes (GET public for approved, POST/PUT/DELETE protected with approval workflow)
     let resource_public = Router::new()
         .route("/", axum::routing::get(routes::resources::list_resources))
-        .route("/:id", axum::routing::get(routes::resources::get_resource));
+        .route("/:id", axum::routing::get(routes::resources::get_resource))
+        .layer(optional_auth_layer.clone());
     
     let resource_protected = Router::new()
         .route("/", axum::routing::post(routes::resources::create_resource))
-        .route("/:id", axum::routing::delete(routes::resources::delete_resource))
+        .route("/all", axum::routing::get(routes::resources::list_all_resources))
+        .route("/my", axum::routing::get(routes::resources::list_my_resources))
+        .route("/:id", axum::routing::put(routes::resources::update_resource)
+            .delete(routes::resources::delete_resource))
+        .route("/:id/approve", axum::routing::post(routes::resources::approve_or_reject_resource))
+        .route("/:id/collaborators", axum::routing::post(routes::resources::add_collaborator))
+        .route("/:id/collaborators/:user_id", axum::routing::delete(routes::resources::remove_collaborator))
         .layer(auth_layer.clone());
     
     let resource_routes = resource_public.merge(resource_protected);
@@ -178,15 +192,21 @@ async fn main() {
     
     let application_routes = application_public.merge(application_protected);
     
-    // Build blog routes (GET public for published, POST/DELETE protected)
+    // Build blog routes (GET public for approved published, POST/PUT/DELETE protected with approval workflow)
     let blog_public = Router::new()
         .route("/", axum::routing::get(routes::blog::list_blog_posts))
-        .route("/slug/:slug", axum::routing::get(routes::blog::get_blog_post));
+        .route("/slug/:slug", axum::routing::get(routes::blog::get_blog_post))
+        .layer(optional_auth_layer.clone());
     
     let blog_protected = Router::new()
         .route("/all", axum::routing::get(routes::blog::list_all_blog_posts))
+        .route("/my", axum::routing::get(routes::blog::list_my_blog_posts))
         .route("/", axum::routing::post(routes::blog::create_blog_post))
-        .route("/id/:id", axum::routing::delete(routes::blog::delete_blog_post))
+        .route("/:id", axum::routing::put(routes::blog::update_blog_post)
+            .delete(routes::blog::delete_blog_post))
+        .route("/:id/approve", axum::routing::post(routes::blog::approve_or_reject_blog_post))
+        .route("/:id/collaborators", axum::routing::post(routes::blog::add_collaborator))
+        .route("/:id/collaborators/:user_id", axum::routing::delete(routes::blog::remove_collaborator))
         .layer(auth_layer.clone());
     
     let blog_routes = blog_public.merge(blog_protected);
@@ -196,15 +216,6 @@ async fn main() {
         .route("/image", axum::routing::post(routes::upload::upload_image))
         .route("/profile-picture", axum::routing::post(routes::upload::upload_profile_picture))
         .route("/delete", axum::routing::post(routes::upload::delete_image))
-        .layer(auth_layer.clone());
-    
-    // Build user management routes (admin only)
-    let user_routes = Router::new()
-        .route("/", axum::routing::get(routes::users::list_users)
-            .post(routes::users::create_user))
-        .route("/:id", axum::routing::get(routes::users::get_user)
-            .delete(routes::users::delete_user))
-        .route("/:id/role", axum::routing::patch(routes::users::update_user_role))
         .layer(auth_layer.clone());
     
     // Build stats routes (admin only)
@@ -277,11 +288,11 @@ async fn main() {
             .delete(routes::rich_content::delete_event_prerequisite))
         .route("/events/:event_id/prerequisites/reorder",
             axum::routing::patch(routes::rich_content::reorder_event_prerequisites))
-        // Team contributions
-        .route("/team/:member_id/contributions",
+        // User contributions
+        .route("/users/:user_id/contributions",
             axum::routing::get(routes::rich_content::list_team_contributions)
             .post(routes::rich_content::create_team_contribution))
-        .route("/team/:member_id/contributions/:contribution_id",
+        .route("/users/:user_id/contributions/:contribution_id",
             axum::routing::put(routes::rich_content::update_team_contribution)
             .delete(routes::rich_content::delete_team_contribution))
         .layer(auth_layer.clone());
@@ -294,14 +305,13 @@ async fn main() {
         .nest("/api/auth", auth_routes)
         .nest("/api/projects", project_routes)
         .nest("/api/events", event_routes)
-        .nest("/api/team", team_routes)
+        .nest("/api/users", user_routes)
         .nest("/api/resources", resource_routes)
         .nest("/api/visuals", visual_routes)
         .nest("/api/contacts", contact_routes)
         .nest("/api/applications", application_routes)
         .nest("/api/blog", blog_routes)
         .nest("/api/upload", upload_routes)
-        .nest("/api/users", user_routes)
         .nest("/api/stats", stats_routes)
         .nest("/api/notifications", notification_routes)
         .nest("/api/announcements", announcement_routes)

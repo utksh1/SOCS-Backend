@@ -7,6 +7,5 @@ pub mod event_repository;
 pub mod notification_repository;
 pub mod project_repository;
 pub mod resource_repository;
-pub mod team_repository;
 pub mod user_repository;
 pub mod visual_repository;

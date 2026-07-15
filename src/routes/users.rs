@@ -24,31 +24,50 @@ pub struct CreateUserDto {
     #[validate(length(min = 8))]
     pub password: String,
     
-    #[validate(length(min = 1))]
-    pub role: String, // "MEMBER", "ADMIN", or "MANAGEMENT"
+    pub role: crate::models::user::UserRole, // TOPLEAD, MENTOR, CORE, LEAD, or MEMBER
+    
+    pub position: Option<String>,
+    pub bio: Option<String>,
+    pub skills: Option<Vec<String>>,
+    pub github: Option<String>,
+    pub linkedin: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
-pub struct UpdateUserRoleDto {
-    #[validate(length(min = 1))]
-    pub role: String, // "MEMBER", "ADMIN", or "MANAGEMENT"
+pub struct UpdateUserDto {
+    #[validate(length(min = 1, max = 255))]
+    pub name: Option<String>,
+    
+    pub role: Option<crate::models::user::UserRole>,
+    
+    pub position: Option<String>,
+    pub bio: Option<String>,
+    pub skills: Option<Vec<String>>,
+    pub github: Option<String>,
+    pub linkedin: Option<String>,
 }
 
-// Admin only - create new user
+// TopLead/Mentor only - create new user
 pub async fn create_user(
     State(state): State<AppState>,
-    Extension(_admin): Extension<SafeUser>,
+    Extension(creator): Extension<SafeUser>,
     Json(payload): Json<CreateUserDto>,
 ) -> Result<Json<serde_json::Value>> {
     payload.validate()?;
     
-    // Validate role
-    let role = match payload.role.as_str() {
-        "MEMBER" | "ADMIN" | "MANAGEMENT" | "EVENT_ORGANIZER" | "BLOG_EDITOR" | "RESOURCE_MANAGER" | "TEAM_LEAD" => payload.role.as_str(),
-        _ => return Err(crate::error::ApiError::BadRequest(
-            "Invalid role. Must be MEMBER, EVENT_ORGANIZER, BLOG_EDITOR, RESOURCE_MANAGER, TEAM_LEAD, MANAGEMENT, or ADMIN".to_string()
-        )),
-    };
+    // Check if creator has permission to create users
+    if !creator.role.can_create_delete_users() {
+        return Err(crate::error::ApiError::Forbidden(
+            "Only TopLead or Mentor can create users".to_string()
+        ));
+    }
+    
+    // Check if creator can assign the requested role
+    if !creator.role.can_manage(&payload.role) {
+        return Err(crate::error::ApiError::Forbidden(
+            format!("You cannot assign {} role", format!("{:?}", payload.role))
+        ));
+    }
     
     // Check if email already exists
     if user_repository::find_by_email(&state.db, &payload.email).await?.is_some() {
@@ -61,42 +80,40 @@ pub async fn create_user(
     let password_hash = bcrypt::hash(&payload.password, bcrypt::DEFAULT_COST)
         .map_err(|_| crate::error::ApiError::InternalServerError)?;
     
-    // Create user with specified role
-    let user = sqlx::query(
+    // Generate slug from name
+    let slug = crate::utils::slugify::slugify(&payload.name);
+    
+    // Create user with specified role and profile
+    let user = sqlx::query_as::<_, SafeUser>(
         r#"
-        INSERT INTO users (name, email, password, role)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, name, email, role, profile_picture, created_at, updated_at
+        INSERT INTO users (name, email, password, role, slug, position, bio, skills, github, linkedin)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
         "#
     )
     .bind(&payload.name)
     .bind(&payload.email)
     .bind(&password_hash)
-    .bind(role)
+    .bind(&payload.role)
+    .bind(&slug)
+    .bind(&payload.position)
+    .bind(&payload.bio)
+    .bind(&payload.skills)
+    .bind(&payload.github)
+    .bind(&payload.linkedin)
     .fetch_one(&state.db)
     .await?;
     
-    let safe_user = SafeUser {
-        id: user.get("id"),
-        name: user.get("name"),
-        email: user.get("email"),
-        role: user.get("role"),
-        profile_picture: user.get("profile_picture"),
-        created_at: user.get("created_at"),
-        updated_at: user.get("updated_at"),
-    };
-    
     Ok(Json(json!({
         "success": true,
-        "message": format!("User created successfully with {} role", role),
-        "data": safe_user
+        "message": format!("User created successfully with {:?} role", payload.role),
+        "data": user
     })))
 }
 
-// Admin only - list all users with their roles (with pagination)
+// Public - list all users (team directory)
 pub async fn list_users(
     State(state): State<AppState>,
-    Extension(_admin): Extension<SafeUser>,
     Query(mut params): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>> {
     params.validate();
@@ -109,7 +126,7 @@ pub async fn list_users(
     // Get paginated users
     let users = sqlx::query_as::<_, SafeUser>(
         r#"
-        SELECT id, name, email, role, profile_picture, created_at, updated_at
+        SELECT id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
         FROM users
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
@@ -129,58 +146,133 @@ pub async fn list_users(
     })))
 }
 
-// Admin only - update any user's role
-pub async fn update_user_role(
+// TopLead/Mentor/Core - update user profile and role
+pub async fn update_user(
     State(state): State<AppState>,
-    Extension(admin): Extension<SafeUser>,
+    Extension(updater): Extension<SafeUser>,
     Path(user_id): Path<Uuid>,
-    Json(payload): Json<UpdateUserRoleDto>,
+    Json(payload): Json<UpdateUserDto>,
 ) -> Result<Json<serde_json::Value>> {
     payload.validate()?;
     
-    // Validate role
-    let role = match payload.role.as_str() {
-        "MEMBER" | "ADMIN" | "MANAGEMENT" | "EVENT_ORGANIZER" | "BLOG_EDITOR" | "RESOURCE_MANAGER" | "TEAM_LEAD" => payload.role.as_str(),
-        _ => return Err(crate::error::ApiError::BadRequest(
-            "Invalid role. Must be MEMBER, EVENT_ORGANIZER, BLOG_EDITOR, RESOURCE_MANAGER, TEAM_LEAD, MANAGEMENT, or ADMIN".to_string()
-        )),
-    };
+    // Get target user
+    let target_user = sqlx::query_as::<_, SafeUser>(
+        "SELECT id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at FROM users WHERE id = $1"
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| crate::error::ApiError::NotFound("User not found".to_string()))?;
     
-    // Prevent admin from changing their own role
-    if user_id == admin.id {
+    // Check if updater has permission to update this user
+    if !updater.role.can_manage(&target_user.role) {
+        return Err(crate::error::ApiError::Forbidden(
+            "You don't have permission to update this user".to_string()
+        ));
+    }
+    
+    // If updating role, check if updater can assign the new role
+    if let Some(ref new_role) = payload.role {
+        if updater.role.level() < new_role.level() {
+            return Err(crate::error::ApiError::Forbidden(
+                "You cannot assign a role higher than your own".to_string()
+            ));
+        }
+    }
+    
+    // Prevent user from changing their own role
+    if user_id == updater.id && payload.role.is_some() {
         return Err(crate::error::ApiError::BadRequest(
             "You cannot change your own role".to_string()
         ));
     }
     
-    // Update user role
-    sqlx::query(
-        r#"
-        UPDATE users 
-        SET role = $1, updated_at = NOW() 
-        WHERE id = $2
-        "#
-    )
-    .bind(role)
-    .bind(user_id)
-    .execute(&state.db)
-    .await?;
+    // Build dynamic update query
+    let mut updates = Vec::new();
+    let mut bind_count = 1;
+    
+    if payload.name.is_some() {
+        updates.push(format!("name = ${}", bind_count));
+        bind_count += 1;
+    }
+    if payload.role.is_some() {
+        updates.push(format!("role = ${}", bind_count));
+        bind_count += 1;
+    }
+    if payload.position.is_some() {
+        updates.push(format!("position = ${}", bind_count));
+        bind_count += 1;
+    }
+    if payload.bio.is_some() {
+        updates.push(format!("bio = ${}", bind_count));
+        bind_count += 1;
+    }
+    if payload.skills.is_some() {
+        updates.push(format!("skills = ${}", bind_count));
+        bind_count += 1;
+    }
+    if payload.github.is_some() {
+        updates.push(format!("github = ${}", bind_count));
+        bind_count += 1;
+    }
+    if payload.linkedin.is_some() {
+        updates.push(format!("linkedin = ${}", bind_count));
+        bind_count += 1;
+    }
+    
+    if updates.is_empty() {
+        return Err(crate::error::ApiError::BadRequest("No fields to update".to_string()));
+    }
+    
+    updates.push("updated_at = NOW()".to_string());
+    
+    let query_str = format!(
+        "UPDATE users SET {} WHERE id = ${} RETURNING id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at",
+        updates.join(", "),
+        bind_count
+    );
+    
+    let mut query = sqlx::query_as::<_, SafeUser>(&query_str);
+    
+    if let Some(name) = &payload.name {
+        query = query.bind(name);
+    }
+    if let Some(role) = &payload.role {
+        query = query.bind(role);
+    }
+    if let Some(position) = &payload.position {
+        query = query.bind(position);
+    }
+    if let Some(bio) = &payload.bio {
+        query = query.bind(bio);
+    }
+    if let Some(skills) = &payload.skills {
+        query = query.bind(skills);
+    }
+    if let Some(github) = &payload.github {
+        query = query.bind(github);
+    }
+    if let Some(linkedin) = &payload.linkedin {
+        query = query.bind(linkedin);
+    }
+    
+    let user = query.bind(user_id).fetch_one(&state.db).await?;
     
     Ok(Json(json!({
         "success": true,
-        "message": format!("User role updated to {}", role)
+        "message": "User updated successfully",
+        "data": user
     })))
 }
 
-// Admin only - get user by ID
+// Public - get user by ID
 pub async fn get_user(
     State(state): State<AppState>,
-    Extension(_admin): Extension<SafeUser>,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
     let user = sqlx::query_as::<_, SafeUser>(
         r#"
-        SELECT id, name, email, role, profile_picture, created_at, updated_at
+        SELECT id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
         FROM users
         WHERE id = $1
         "#
@@ -196,14 +288,44 @@ pub async fn get_user(
     })))
 }
 
-// Admin only - delete user
+// Public - get user by slug
+pub async fn get_user_by_slug(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<serde_json::Value>> {
+    let user = sqlx::query_as::<_, SafeUser>(
+        r#"
+        SELECT id, name, email, role, slug, position, bio, skills, github, linkedin, avatar_url, profile_picture, created_at, updated_at
+        FROM users
+        WHERE slug = $1
+        "#
+    )
+    .bind(&slug)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| crate::error::ApiError::NotFound("User not found".to_string()))?;
+    
+    Ok(Json(json!({
+        "success": true,
+        "data": user
+    })))
+}
+
+// TopLead/Mentor - delete user
 pub async fn delete_user(
     State(state): State<AppState>,
-    Extension(admin): Extension<SafeUser>,
+    Extension(deleter): Extension<SafeUser>,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
-    // Prevent admin from deleting themselves
-    if user_id == admin.id {
+    // Check if deleter has permission
+    if !deleter.role.can_create_delete_users() {
+        return Err(crate::error::ApiError::Forbidden(
+            "Only TopLead or Mentor can delete users".to_string()
+        ));
+    }
+    
+    // Prevent user from deleting themselves
+    if user_id == deleter.id {
         return Err(crate::error::ApiError::BadRequest(
             "You cannot delete your own account".to_string()
         ));

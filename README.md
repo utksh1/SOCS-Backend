@@ -10,16 +10,19 @@
 ## 🚀 Features
 
 - **🦀 Rust-Powered**: Type-safe, memory-safe, and blazingly fast
-- **⚡ 112+ API Endpoints**: Complete REST API for all platform features
+- **⚡ 120+ API Endpoints**: Complete REST API for all platform features
 - **🔐 JWT Authentication**: Secure token-based authentication with bcrypt
-- **👥 7 User Roles**: Granular permission system with role hierarchy
+- **👥 5-Tier Role System**: TopLead > Mentor > Core > Lead > Member
+- **✅ Approval Workflow**: Content submission & approval system for all members
+- **🤝 Collaborator System**: Multi-user collaboration on projects, blogs, and resources
 - **📊 Analytics**: Real-time statistics and metrics endpoints
 - **📄 Pagination**: Efficient pagination on all list endpoints
 - **📁 File Upload**: Cloudflare R2 integration for cloud storage
 - **📧 Email**: Gmail SMTP for notifications
-- **🗃️ PostgreSQL**: 20 tables with optimized indexes
+- **🗃️ PostgreSQL**: 23+ tables with optimized indexes
 - **🔄 Migrations**: SQLx-powered database migrations
 - **🎯 Phase 5**: Dynamic rich content APIs (30 endpoints)
+- **💚 Auto-Keepalive**: GitHub Actions workflow prevents database inactivity deletion
 
 ## 📋 Table of Contents
 
@@ -30,6 +33,7 @@
 - [Running the Server](#running-the-server)
 - [API Documentation](#api-documentation)
 - [User Roles & Permissions](#user-roles--permissions)
+- [Approval Workflow](#approval-workflow)
 - [Project Structure](#project-structure)
 - [Testing](#testing)
 - [Deployment](#deployment)
@@ -117,12 +121,14 @@ DATABASE_URL=postgresql://localhost:5432/socs
 # JWT AUTHENTICATION
 # ============================================
 JWT_SECRET=your-super-secret-key-minimum-32-characters-long
+JWT_EXPIRES_IN=86400
 
 # ============================================
 # SERVER CONFIGURATION
 # ============================================
 HOST=127.0.0.1
 PORT=5001
+CORS_ORIGIN=http://localhost:3000
 
 # ============================================
 # CLOUDFLARE R2 (File Uploads)
@@ -179,19 +185,19 @@ sqlx migrate info
 sqlx migrate revert
 ```
 
-### Create First Admin User
+### Create First TopLead User
 
 ```sql
 -- Connect to database
 psql socs
 
--- Insert admin user (password: admin123)
+-- Insert TopLead user (password: admin123)
 INSERT INTO users (name, email, password, role)
 VALUES (
   'Admin User',
   'admin@socs.edu',
   '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIeWU7u3MO',
-  'ADMIN'
+  'TOPLEAD'
 );
 ```
 
@@ -227,109 +233,168 @@ cargo build --release
 # Health check
 curl http://localhost:5001/health
 
-# Expected response: OK
+# Database health check (with write operation)
+curl http://localhost:5001/health/db
+
+# Expected response: {"status":"healthy","database":"active",...}
 ```
 
 ## 📡 API Documentation
 
-### Core Endpoints (82 endpoints)
-
-#### Authentication (4 endpoints)
+### Authentication (5 endpoints)
 ```http
-POST   /api/auth/register       # Register new user
-POST   /api/auth/login          # Login user
-GET    /api/auth/me             # Get current user
-POST   /api/auth/logout         # Logout user
+POST   /api/auth/register           # Register new user (TopLead only)
+POST   /api/auth/login              # Login user
+GET    /api/auth/me                 # Get current user
+PATCH  /api/auth/update-name        # Update user name
+PATCH  /api/auth/change-password    # Change password
 ```
 
-#### Users (5 endpoints)
+### Users (6 endpoints) - Role-Based Access
 ```http
-GET    /api/users?page=1&limit=10  # List users (paginated)
-POST   /api/users                   # Create user (admin)
-GET    /api/users/:id               # Get user
-PATCH  /api/users/:id/role          # Update user role (admin)
-DELETE /api/users/:id               # Delete user (admin)
+GET    /api/users                   # List all users (public)
+POST   /api/users                   # Create user (TopLead/Mentor only)
+GET    /api/users/slug/:slug        # Get user by slug (public)
+GET    /api/users/:id               # Get user by ID (public)
+PUT    /api/users/:id               # Update user (role-based permissions)
+DELETE /api/users/:id               # Delete user (TopLead/Mentor only)
 ```
 
-#### Projects (5 endpoints)
+### Projects (12 endpoints) - Approval Workflow
 ```http
-GET    /api/projects?page=1&limit=10   # List projects
-POST   /api/projects                   # Create project
-GET    /api/projects/slug/:slug        # Get by slug
-PUT    /api/projects/:id               # Update project
-DELETE /api/projects/:id               # Delete project
+# Public Endpoints
+GET    /api/projects                # List approved projects
+GET    /api/projects/:id            # View project (approved or if owner/collaborator)
+
+# Protected Endpoints
+POST   /api/projects                # Create project (any member, pending approval)
+GET    /api/projects/all            # List all including pending (TopLead only)
+GET    /api/projects/my             # List your own projects
+PUT    /api/projects/:id            # Update project (owner/collaborator/TopLead)
+DELETE /api/projects/:id            # Delete project (owner/TopLead)
+
+# Approval Workflow
+POST   /api/projects/:id/approve    # Approve/reject project (TopLead only)
+                                    # Body: {"status": "approved"} or {"status": "rejected"}
+
+# Collaborator Management
+POST   /api/projects/:id/collaborators           # Add collaborator
+                                                  # Body: {"user_id": "uuid"}
+DELETE /api/projects/:id/collaborators/:user_id  # Remove collaborator
 ```
 
-#### Events (5 endpoints)
+### Blog Posts (12 endpoints) - Approval Workflow
 ```http
-GET    /api/events?page=1&limit=10  # List events
-POST   /api/events                   # Create event
-GET    /api/events/slug/:slug        # Get by slug
-PUT    /api/events/:id               # Update event
-DELETE /api/events/:id               # Delete event
+# Public Endpoints
+GET    /api/blog                    # List approved & published posts
+GET    /api/blog/slug/:slug         # View post (approved+published or if author/collaborator)
+
+# Protected Endpoints
+POST   /api/blog                    # Create post (any member, pending approval)
+GET    /api/blog/all                # List all including pending (TopLead only)
+GET    /api/blog/my                 # List your own posts
+PUT    /api/blog/:id                # Update post (author/collaborator/TopLead)
+DELETE /api/blog/:id                # Delete post (author/TopLead)
+
+# Approval Workflow
+POST   /api/blog/:id/approve        # Approve/reject post (TopLead only)
+                                    # Body: {"status": "approved"} or {"status": "rejected"}
+
+# Collaborator Management
+POST   /api/blog/:id/collaborators           # Add collaborator
+                                              # Body: {"user_id": "uuid"}
+DELETE /api/blog/:id/collaborators/:user_id  # Remove collaborator
 ```
 
-#### Blog (5 endpoints)
+### Resources (12 endpoints) - Approval Workflow
 ```http
-GET    /api/blog?page=1&limit=10  # List blog posts
-POST   /api/blog                   # Create blog post
-GET    /api/blog/slug/:slug        # Get by slug
-PUT    /api/blog/:id               # Update blog post
-DELETE /api/blog/:id               # Delete blog post
+# Public Endpoints
+GET    /api/resources               # List approved resources
+GET    /api/resources/:id           # View resource (approved or if creator/collaborator)
+
+# Protected Endpoints
+POST   /api/resources               # Create resource (any member, pending approval)
+GET    /api/resources/all           # List all including pending (TopLead only)
+GET    /api/resources/my            # List your own resources
+PUT    /api/resources/:id           # Update resource (creator/collaborator/TopLead)
+DELETE /api/resources/:id           # Delete resource (creator/TopLead)
+
+# Approval Workflow
+POST   /api/resources/:id/approve   # Approve/reject resource (TopLead only)
+                                    # Body: {"status": "approved"} or {"status": "rejected"}
+
+# Collaborator Management
+POST   /api/resources/:id/collaborators           # Add collaborator
+                                                   # Body: {"user_id": "uuid"}
+DELETE /api/resources/:id/collaborators/:user_id  # Remove collaborator
 ```
 
-#### Team (5 endpoints)
+### Events (6 endpoints)
 ```http
-GET    /api/team?page=1&limit=10  # List team members
-POST   /api/team                   # Create team member
-GET    /api/team/slug/:slug        # Get by slug
-PUT    /api/team/:id               # Update team member
-DELETE /api/team/:id               # Delete team member
+GET    /api/events                  # List events
+POST   /api/events                  # Create event
+GET    /api/events/:id              # Get event
+DELETE /api/events/:id              # Delete event
+POST   /api/events/:id/register     # Register for event
+GET    /api/events/:id/registrations # List registrations (protected)
 ```
 
-#### Resources (4 endpoints)
+### Applications (4 endpoints)
 ```http
-GET    /api/resources?page=1&limit=10  # List resources
-POST   /api/resources                   # Create resource
-GET    /api/resources/:id               # Get resource
-DELETE /api/resources/:id               # Delete resource
+POST   /api/applications            # Submit application
+GET    /api/applications            # List applications (protected)
+GET    /api/applications/:id        # Get application (protected)
+PATCH  /api/applications/:id        # Review application (protected)
 ```
 
-#### Applications (4 endpoints)
+### Contacts (2 endpoints)
 ```http
-GET    /api/applications?page=1&limit=10  # List applications
-POST   /api/applications                   # Submit application
-PUT    /api/applications/:id               # Update status
-DELETE /api/applications/:id               # Delete application
+POST   /api/contacts                # Submit contact form
+GET    /api/contacts                # List contacts (protected)
 ```
 
-#### Analytics (6 endpoints)
+### Visuals (4 endpoints)
 ```http
-GET    /api/stats/overview                 # Overview stats
-GET    /api/stats/recent-activity          # Recent activity
-GET    /api/stats/users?period=30d         # User growth
-GET    /api/stats/events?period=7d         # Event stats
-GET    /api/stats/applications?period=90d  # Application metrics
-GET    /api/stats/blog?period=30d          # Blog engagement
+GET    /api/visuals                 # List visuals
+POST   /api/visuals                 # Create visual (protected)
+GET    /api/visuals/:id             # Get visual
+DELETE /api/visuals/:id             # Delete visual (protected)
 ```
 
-#### Notifications (5 endpoints)
+### Upload (3 endpoints)
 ```http
-GET    /api/notifications                 # Get notifications
-GET    /api/notifications/unread/count    # Get unread count
-PATCH  /api/notifications/:id/read        # Mark as read
-PATCH  /api/notifications/read-all        # Mark all as read
-DELETE /api/notifications/:id             # Delete notification
+POST   /api/upload/image            # Upload image (protected)
+POST   /api/upload/profile-picture  # Upload profile picture (protected)
+POST   /api/upload/delete           # Delete image (protected)
 ```
 
-#### Announcements (6 endpoints)
+### Analytics (6 endpoints)
 ```http
-GET    /api/announcements     # List announcements
-GET    /api/announcements/:id # Get announcement
-POST   /api/announcements     # Create (admin)
-PUT    /api/announcements/:id # Update (admin)
-DELETE /api/announcements/:id # Delete (admin)
-PATCH  /api/announcements/:id/pin # Toggle pin (admin)
+GET    /api/stats/overview          # Overview stats (protected)
+GET    /api/stats/recent-activity   # Recent activity (protected)
+GET    /api/stats/users             # User growth (protected)
+GET    /api/stats/events            # Event stats (protected)
+GET    /api/stats/applications      # Application metrics (protected)
+GET    /api/stats/blog              # Blog engagement (protected)
+```
+
+### Notifications (5 endpoints)
+```http
+GET    /api/notifications           # Get notifications (protected)
+GET    /api/notifications/unread/count    # Get unread count (protected)
+PATCH  /api/notifications/:id/read        # Mark as read (protected)
+PATCH  /api/notifications/read-all        # Mark all as read (protected)
+DELETE /api/notifications/:id             # Delete notification (protected)
+```
+
+### Announcements (6 endpoints)
+```http
+GET    /api/announcements           # List announcements
+GET    /api/announcements/:id       # Get announcement
+POST   /api/announcements           # Create (protected)
+PUT    /api/announcements/:id       # Update (protected)
+DELETE /api/announcements/:id       # Delete (protected)
+PATCH  /api/announcements/:id/pin   # Toggle pin (protected)
 ```
 
 ### Phase 5: Rich Content APIs (30 endpoints)
@@ -343,7 +408,7 @@ DELETE /api/projects/:id/features/:fid       # Delete feature
 PATCH  /api/projects/:id/features/reorder    # Reorder features
 ```
 
-#### Project Contributors
+#### Project Contributors (Legacy - Use Collaborators Instead)
 ```http
 GET    /api/projects/:id/contributors        # List contributors
 POST   /api/projects/:id/contributors        # Add contributor
@@ -368,12 +433,12 @@ DELETE /api/events/:id/prerequisites/:pid    # Delete prerequisite
 PATCH  /api/events/:id/prerequisites/reorder # Reorder prerequisites
 ```
 
-#### Team Contributions
+#### User Contributions
 ```http
-GET    /api/team/:id/contributions           # List contributions
-POST   /api/team/:id/contributions           # Add contribution
-PUT    /api/team/:id/contributions/:cid      # Update contribution
-DELETE /api/team/:id/contributions/:cid      # Delete contribution
+GET    /api/users/:id/contributions          # List contributions
+POST   /api/users/:id/contributions          # Add contribution
+PUT    /api/users/:id/contributions/:cid     # Update contribution
+DELETE /api/users/:id/contributions/:cid     # Delete contribution
 ```
 
 ### Response Format
@@ -400,44 +465,110 @@ All responses follow this standard format:
 ```json
 {
   "success": true,
-  "data": {
-    "items": [ /* array of items */ ],
-    "pagination": {
-      "page": 1,
-      "limit": 10,
-      "total": 100,
-      "total_pages": 10,
-      "has_next": true,
-      "has_prev": false
-    }
+  "data": [ /* array of items */ ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 100,
+    "total_pages": 10,
+    "has_next": true,
+    "has_prev": false
   }
 }
 ```
 
 ## 🔑 User Roles & Permissions
 
-### Role Hierarchy
+### 5-Tier Role Hierarchy
 
-1. **MEMBER** - Basic member access (view public content)
-2. **EVENT_ORGANIZER** - Can manage events
-3. **BLOG_EDITOR** - Can manage blog posts
-4. **RESOURCE_MANAGER** - Can manage resources
-5. **TEAM_LEAD** - Can manage team directory
-6. **MANAGEMENT** - Combined permissions of specialized roles
-7. **ADMIN** - Full system access including user management
+1. **TopLead** (Level 5) - Full system access, content approval authority
+2. **Mentor** (Level 4) - Can create/delete users, manage content
+3. **Core** (Level 3) - Core team member privileges
+4. **Lead** (Level 2) - Team lead privileges
+5. **Member** (Level 1) - Basic member access
 
 ### Permission Matrix
 
-| Feature | Member | Event Org | Blog Editor | Resource Mgr | Team Lead | Management | Admin |
-|---------|:------:|:---------:|:-----------:|:------------:|:---------:|:----------:|:-----:|
-| View Content | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Manage Events | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Manage Blog | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ |
-| Manage Resources | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ |
-| Manage Team | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
-| Manage Projects | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ |
-| Manage Users | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| View Analytics | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Feature | Member | Lead | Core | Mentor | TopLead |
+|---------|:------:|:----:|:----:|:------:|:-------:|
+| View Public Content | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Submit Content | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Edit Own Content | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Delete Own Content | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Add Collaborators | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Approve Content** | ❌ | ❌ | ❌ | ❌ | ✅ |
+| View All Pending | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Create Users | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Delete Users | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Edit Any Content | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Delete Any Content | ❌ | ❌ | ❌ | ❌ | ✅ |
+| View Analytics | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+### Role-Based Permissions
+
+**User Management:**
+- TopLead/Mentor can create and delete users
+- TopLead/Mentor can only manage users at or below their role level
+- Users can update their own profile information
+
+**Content Permissions:**
+- Any member can create content (projects, blogs, resources)
+- Creator becomes the owner and can edit/delete their content
+- Owner can add collaborators who can also edit
+- TopLead can edit/delete any content
+- Only TopLead can approve pending content to make it public
+
+## ✅ Approval Workflow
+
+### Content Submission Flow
+
+```mermaid
+Member → Create Content → Pending Status → TopLead Review → Approved/Rejected
+```
+
+**1. Any Member Creates Content:**
+- Member submits project/blog/resource
+- Content starts with `status: pending`
+- Visible only to creator and TopLead
+
+**2. TopLead Reviews:**
+```http
+POST /api/projects/:id/approve
+Body: {"status": "approved"}  # or "rejected"
+```
+
+**3. Content Goes Live:**
+- Approved content becomes public
+- Shows `approved_by` and `approved_at` fields
+- Appears in public listing endpoints
+
+**4. Collaboration:**
+- Owner adds collaborators
+- Collaborators can edit (but not delete)
+- Owner can remove collaborators
+
+### Workflow Example
+
+```bash
+# 1. Member creates a project
+curl -X POST /api/projects \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"title": "New CTF Challenge", "description": "..."}'
+# Response: {"status": "pending"}
+
+# 2. TopLead views pending projects
+curl /api/projects/all \
+  -H "Authorization: Bearer $TOPLEAD_TOKEN"
+
+# 3. TopLead approves
+curl -X POST /api/projects/abc-123/approve \
+  -H "Authorization: Bearer $TOPLEAD_TOKEN" \
+  -d '{"status": "approved"}'
+
+# 4. Now visible to everyone
+curl /api/projects
+# Shows the approved project
+```
 
 ## 📁 Project Structure
 
@@ -445,15 +576,16 @@ All responses follow this standard format:
 socs-backend/
 ├── src/
 │   ├── config/               # Configuration management
-│   │   ├── database.rs       # Database connection
+│   │   ├── database.rs       # Database connection pool
+│   │   ├── env.rs           # Environment variables
 │   │   └── mod.rs
 │   │
-│   ├── dto/                  # Data Transfer Objects (12 DTOs)
+│   ├── dto/                  # Data Transfer Objects
 │   │   ├── auth_dto.rs
 │   │   ├── project_dto.rs
-│   │   ├── event_dto.rs
+│   │   ├── blog_post_dto.rs
+│   │   ├── resource_dto.rs
 │   │   ├── pagination_dto.rs
-│   │   ├── rich_content_dto.rs  # Phase 5
 │   │   └── mod.rs
 │   │
 │   ├── error/                # Error handling
@@ -461,33 +593,35 @@ socs-backend/
 │   │   └── mod.rs
 │   │
 │   ├── middleware/           # Middleware functions
-│   │   ├── auth.rs           # JWT authentication
+│   │   ├── auth.rs           # JWT auth + optional auth
 │   │   └── mod.rs
 │   │
-│   ├── models/               # Database models (16+ models)
-│   │   ├── user.rs
-│   │   ├── project.rs
+│   ├── models/               # Database models
+│   │   ├── user.rs           # User + UserRole enum
+│   │   ├── project.rs        # Project + ContentStatus
+│   │   ├── blog_post.rs      # BlogPost + ContentStatus
+│   │   ├── resource.rs       # Resource + ContentStatus
 │   │   ├── event.rs
-│   │   ├── rich_content.rs   # Phase 5
+│   │   ├── notification.rs
 │   │   └── mod.rs
 │   │
 │   ├── repositories/         # Data access layer
 │   │   ├── user_repository.rs
 │   │   ├── project_repository.rs
+│   │   ├── blog_post_repository.rs
 │   │   └── mod.rs
 │   │
-│   ├── routes/               # API route handlers (14 modules)
+│   ├── routes/               # API route handlers
 │   │   ├── auth.rs
-│   │   ├── users.rs
-│   │   ├── projects.rs
+│   │   ├── users.rs          # Role-based user management
+│   │   ├── projects.rs       # With approval workflow
+│   │   ├── blog.rs           # With approval workflow
+│   │   ├── resources.rs      # With approval workflow
 │   │   ├── events.rs
-│   │   ├── blog.rs
-│   │   ├── team.rs
-│   │   ├── resources.rs
 │   │   ├── applications.rs
 │   │   ├── stats.rs
 │   │   ├── notifications.rs
-│   │   ├── rich_content.rs   # Phase 5
+│   │   ├── health.rs         # With DB keepalive
 │   │   └── mod.rs
 │   │
 │   ├── services/             # Business logic
@@ -502,13 +636,20 @@ socs-backend/
 │   │
 │   └── main.rs               # Application entry point
 │
-├── migrations/               # Database migrations (12+ files)
+├── migrations/               # Database migrations
 │   ├── 20260101000000_create_users.sql
 │   ├── 20260102000000_create_projects.sql
-│   ├── ...
-│   └── 20260716000000_add_rich_content.sql
+│   ├── 20260718000000_remove_admin_role.sql
+│   ├── 20260719000000_consolidate_team_into_users.sql
+│   ├── 20260720000000_add_approval_workflow.sql
+│   └── ...
+│
+├── .github/
+│   └── workflows/
+│       └── keepalive.yml     # Auto-pings DB every 10 days
 │
 ├── Cargo.toml                # Rust dependencies
+├── render.yaml               # Render deployment config
 ├── .env                      # Environment variables
 ├── .env.example              # Environment template
 └── README.md                 # This file
@@ -535,32 +676,20 @@ cargo check
 
 ## 🚀 Deployment
 
-### Docker Deployment
+### Render Deployment (Automated)
 
-Create a `Dockerfile`:
+This backend is configured for automatic deployment on Render:
 
-```dockerfile
-FROM rust:1.70 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
+1. **Service**: Web Service (Rust)
+2. **Database**: PostgreSQL
+3. **Auto-Deploy**: Enabled via GitHub webhook
+4. **Keepalive**: GitHub Actions pings `/health/db` every 10 days
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/socs-backend /usr/local/bin/
-EXPOSE 5001
-CMD ["socs-backend"]
-```
-
-Build and run:
-
-```bash
-# Build image
-docker build -t socs-backend .
-
-# Run container
-docker run -p 5001:5001 --env-file .env socs-backend
-```
+**Deployment Config** (`render.yaml`):
+- Automatic migrations on deploy
+- Environment variables from Render dashboard
+- Health checks on `/health`
+- Database write operation prevents inactivity deletion
 
 ### Manual Deployment
 
@@ -579,11 +708,21 @@ sqlx migrate run
 
 ```bash
 export DATABASE_URL="postgresql://user:pass@host:5432/socs"
-export JWT_SECRET="your-production-secret-key"
+export JWT_SECRET="your-production-secret-key-64-characters-minimum"
+export JWT_EXPIRES_IN="86400"
 export HOST="0.0.0.0"
 export PORT="5001"
+export CORS_ORIGIN="https://yourdomain.com"
 # ... other variables
 ```
+
+### Database Keepalive
+
+The GitHub Actions workflow (`.github/workflows/keepalive.yml`) automatically:
+- Runs every 10 days
+- Pings `/health/db` endpoint
+- Performs database WRITE operation
+- Prevents Render's 30-day inactivity deletion
 
 ## 🐛 Troubleshooting
 
@@ -624,6 +763,9 @@ sqlx migrate revert
 
 # Re-run all migrations
 sqlx migrate run
+
+# Force rerun specific migration
+sqlx migrate run --ignore-missing
 ```
 
 ### Compilation Errors
@@ -637,6 +779,24 @@ cargo update
 
 # Check for errors
 cargo check
+
+# Fix common warnings
+cargo fix
+```
+
+### Authentication Issues
+
+```bash
+# Check JWT secret length (minimum 32 characters)
+echo $JWT_SECRET | wc -c
+
+# Test login endpoint
+curl -X POST http://localhost:5001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@socs.edu","password":"admin123"}'
+
+# Verify token
+echo "YOUR_TOKEN" | cut -d. -f2 | base64 -d
 ```
 
 ## 📊 Performance
@@ -645,17 +805,20 @@ cargo check
 - **Throughput**: 1000+ requests/second
 - **Memory Usage**: ~50MB base
 - **Database Connections**: Pooled (max 10)
+- **Build Time**: ~2 minutes (release)
+- **Binary Size**: ~15MB (optimized)
 
 ## 🔒 Security
 
-- ✅ **JWT Authentication**: Secure token-based auth
+- ✅ **JWT Authentication**: Secure token-based auth with configurable expiry
 - ✅ **Password Hashing**: bcrypt with cost factor 12
 - ✅ **SQL Injection Prevention**: Parameterized queries with SQLx
 - ✅ **XSS Prevention**: Input sanitization
 - ✅ **CORS**: Configured for frontend origin
-- ✅ **Rate Limiting**: Ready for implementation
 - ✅ **Input Validation**: Validator crate on all inputs
-- ✅ **Role-Based Authorization**: Granular permission checks
+- ✅ **Role-Based Authorization**: 5-tier hierarchy with granular permissions
+- ✅ **Content Approval**: TopLead review required for public content
+- ✅ **Ownership & Collaboration**: Fine-grained access control per resource
 
 ## 🤝 Contributing
 
@@ -677,10 +840,11 @@ MIT License - see LICENSE file for details
 - Database with [SQLx](https://github.com/launchbadge/sqlx)
 - Authentication with [jsonwebtoken](https://github.com/Keats/jsonwebtoken)
 - Password hashing with [bcrypt](https://github.com/Keats/rust-bcrypt)
+- Deployed on [Render](https://render.com)
 
 ## 📞 Support
 
-- **Documentation**: `/docs` folder
+- **Documentation**: This README + inline code comments
 - **Issues**: GitHub Issues
 - **Email**: support@socs.edu
 
@@ -688,4 +852,4 @@ MIT License - see LICENSE file for details
 
 **Built with 🦀 Rust for the SOCS cybersecurity community**
 
-*Platform Status: ✅ Production Ready | API Endpoints: 112+ | Database Tables: 20*
+*Platform Status: ✅ Production Ready | API Endpoints: 120+ | Database Tables: 23+ | Role System: 5-Tier | Approval Workflow: ✅*

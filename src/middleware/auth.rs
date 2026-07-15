@@ -45,7 +45,38 @@ pub async fn auth_middleware(
     Ok(next.run(request).await)
 }
 
-// Middleware to check if user has TopLead tier (replaces admin check)
+// Optional auth middleware - tries to authenticate but doesn't fail if no token
+pub async fn optional_auth_middleware(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    // Try to extract token from Authorization header
+    if let Some(auth_header) = request
+        .headers()
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+    {
+        if let Some(token) = auth_header.strip_prefix("Bearer ") {
+            // Try to verify token and get user
+            if let Ok(claims) = jwt::verify_token(token, &state.config.jwt_secret) {
+                if let Ok(user_id) = Uuid::parse_str(&claims.sub) {
+                    if let Ok(user) = auth_service::get_user_by_id(&state.db, user_id).await {
+                        // Insert Some(user) into extensions
+                        request.extensions_mut().insert(Some(user));
+                        return next.run(request).await;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Insert None into extensions (no authenticated user)
+    request.extensions_mut().insert(None::<crate::models::user::SafeUser>);
+    next.run(request).await
+}
+
+// Middleware to check if user has TopLead role (replaces admin check)
 pub async fn require_toplead(
     State(state): State<AppState>,
     mut request: Request,
@@ -72,15 +103,8 @@ pub async fn require_toplead(
     
     let user = auth_service::get_user_by_id(&state.db, user_id).await?;
     
-    // Check if user has TopLead tier in team table
-    let user_tier: Option<crate::models::team::MemberTier> = sqlx::query_scalar(
-        "SELECT tier FROM team WHERE created_by = $1 LIMIT 1"
-    )
-    .bind(user.id)
-    .fetch_optional(&state.db)
-    .await?;
-    
-    if !matches!(user_tier, Some(crate::models::team::MemberTier::TopLead)) {
+    // Check if user has TopLead role
+    if user.role != UserRole::TopLead {
         return Err(ApiError::Forbidden("TopLead access required".to_string()));
     }
     
@@ -89,5 +113,3 @@ pub async fn require_toplead(
     
     Ok(next.run(request).await)
 }
-
-// Permission check helpers - removed, now using tier-based checks
