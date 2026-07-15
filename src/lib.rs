@@ -7,6 +7,8 @@ pub mod models;
 pub mod repositories;
 pub mod routes;
 pub mod services;
+pub mod tasks;
+pub mod telemetry;
 pub mod utils;
 
 use axum::{
@@ -25,18 +27,35 @@ use tower_http::{
 pub struct AppState {
     pub db: PgPool,
     pub config: config::env::Config,
-    pub redis: ConnectionManager,
+    /// Redis is required in production for rate limiting. It is optional only
+    /// for hermetic test routers where rate limiting is explicitly disabled.
+    pub redis: Option<ConnectionManager>,
 }
 
 /// Build the application router with the given state
 pub fn build_router(state: AppState) -> Router {
-    // Build CORS layer
+    // Build CORS layer — validate configured origins at startup.
     let cors_origins: Vec<_> = state.config
         .cors_origin
         .split(',')
         .map(|s| s.trim())
-        .filter_map(|origin| origin.parse().ok())
+        .filter(|s| !s.is_empty())
+        .filter_map(|origin| match origin.parse::<axum::http::HeaderValue>() {
+            Ok(value) => Some(value),
+            Err(error) => {
+                tracing::error!(%error, origin, "Ignoring malformed CORS origin");
+                None
+            }
+        })
         .collect();
+
+    if cors_origins.is_empty() {
+        panic!(
+            "CORS_ORIGIN produced zero valid origins (raw value: {:?}). \
+             Fix the value or the server will reject every cross-origin request.",
+            state.config.cors_origin
+        );
+    }
     
     let cors = CorsLayer::new()
         .allow_origin(cors_origins)
@@ -48,17 +67,19 @@ pub fn build_router(state: AppState) -> Router {
     let auth_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::auth_middleware);
     let optional_auth_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::optional_auth_middleware);
     let toplead_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::require_toplead);
+    let verification_layer = axum::middleware::from_fn(middleware::verification::require_verified_email);
     
     // Rate limit middleware
     let auth_rate_limit = axum::middleware::from_fn_with_state(state.clone(), middleware::rate_limit::auth_rate_limit_middleware);
     let public_rate_limit = axum::middleware::from_fn_with_state(state.clone(), middleware::rate_limit::public_rate_limit_middleware);
     let authenticated_rate_limit = axum::middleware::from_fn_with_state(state.clone(), middleware::rate_limit::authenticated_rate_limit_middleware);
+    let upload_rate_limit = axum::middleware::from_fn_with_state(state.clone(), middleware::rate_limit::upload_rate_limit_middleware);
     
     // Build auth routes
     let auth_register = Router::new()
         .route("/register", axum::routing::post(routes::auth::register))
-        .layer(auth_rate_limit.clone())
-        .layer(toplead_layer.clone());
+        .layer(toplead_layer.clone())
+        .layer(auth_rate_limit.clone());
     
     let auth_public = Router::new()
         .route("/login", axum::routing::post(routes::auth::login))
@@ -67,21 +88,29 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reset-password", axum::routing::post(routes::auth::reset_password))
         .layer(auth_rate_limit.clone());
     
-    let auth_sensitive = Router::new()
+    let auth_change_password = Router::new()
         .route("/change-password", axum::routing::patch(routes::auth::change_password))
+        .layer(verification_layer.clone())
+        .layer(auth_layer.clone());
+
+    let auth_resend = Router::new()
         .route("/resend-verification", axum::routing::post(routes::auth::resend_verification))
-        .layer(auth_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let auth_protected = Router::new()
         .route("/me", axum::routing::get(routes::auth::get_me))
-        .route("/update-name", axum::routing::patch(routes::auth::update_name))
+        .route(
+            "/update-name", 
+            axum::routing::patch(routes::auth::update_name)
+                .route_layer(verification_layer.clone())
+        )
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
     let auth_routes = auth_register
         .merge(auth_public)
-        .merge(auth_sensitive)
+        .merge(auth_change_password.layer(auth_rate_limit.clone()))
+        .merge(auth_resend.layer(auth_rate_limit.clone()))
         .merge(auth_protected);
     
     // Build project routes
@@ -130,12 +159,16 @@ pub fn build_router(state: AppState) -> Router {
     
     let user_protected = Router::new()
         .route("/", axum::routing::post(routes::users::create_user))
-        .route("/:id", axum::routing::put(routes::users::update_user)
-            .delete(routes::users::delete_user))
+        .route("/:id", axum::routing::put(routes::users::update_user))
+        .layer(authenticated_rate_limit.clone())
+        .layer(auth_layer.clone());
+
+    let user_critical = Router::new()
+        .route("/:id", axum::routing::delete(routes::users::delete_user))
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
-    let user_routes = user_public.merge(user_protected);
+    let user_routes = user_public.merge(user_protected).merge(user_critical);
     
     // Build resource routes
     let resource_public = Router::new()
@@ -153,6 +186,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/:id/approve", axum::routing::post(routes::resources::approve_or_reject_resource))
         .route("/:id/collaborators", axum::routing::post(routes::resources::add_collaborator))
         .route("/:id/collaborators/:user_id", axum::routing::delete(routes::resources::remove_collaborator))
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -167,6 +201,7 @@ pub fn build_router(state: AppState) -> Router {
     let visual_protected = Router::new()
         .route("/", axum::routing::post(routes::visuals::create_visual))
         .route("/:id", axum::routing::delete(routes::visuals::delete_visual))
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -179,6 +214,7 @@ pub fn build_router(state: AppState) -> Router {
     
     let contact_protected = Router::new()
         .route("/", axum::routing::get(routes::contacts::list_contacts))
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -193,6 +229,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/", axum::routing::get(routes::applications::list_applications))
         .route("/:id", axum::routing::get(routes::applications::get_application)
             .patch(routes::applications::review_application))
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -214,6 +251,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/:id/approve", axum::routing::post(routes::blog::approve_or_reject_blog_post))
         .route("/:id/collaborators", axum::routing::post(routes::blog::add_collaborator))
         .route("/:id/collaborators/:user_id", axum::routing::delete(routes::blog::remove_collaborator))
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -224,6 +262,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/image", axum::routing::post(routes::upload::upload_image))
         .route("/profile-picture", axum::routing::post(routes::upload::upload_profile_picture))
         .route("/delete", axum::routing::post(routes::upload::delete_image))
+        .layer(routes::upload::upload_body_limit())
+        .layer(upload_rate_limit)
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -235,6 +276,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/events", axum::routing::get(routes::stats::get_event_stats))
         .route("/applications", axum::routing::get(routes::stats::get_application_stats))
         .route("/blog", axum::routing::get(routes::stats::get_blog_stats))
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -245,6 +287,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/:id/read", axum::routing::patch(routes::notifications::mark_as_read))
         .route("/read-all", axum::routing::patch(routes::notifications::mark_all_as_read))
         .route("/:id", axum::routing::delete(routes::notifications::delete_notification))
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -259,6 +302,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/:id", axum::routing::put(routes::notifications::update_announcement)
             .delete(routes::notifications::delete_announcement))
         .route("/:id/pin", axum::routing::patch(routes::notifications::toggle_pin_announcement))
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
@@ -266,56 +310,76 @@ pub fn build_router(state: AppState) -> Router {
         .merge(announcement_public)
         .merge(announcement_protected);
     
-    // Build rich content routes
-    let rich_content_routes = Router::new()
-        .route("/projects/:project_id/features", 
-            axum::routing::get(routes::rich_content::list_project_features)
-            .post(routes::rich_content::create_project_feature))
+    // Build rich content routes — read endpoints use optional auth so
+    // unauthenticated visitors can read content for approved parents.
+    let rich_content_public = Router::new()
+        .route("/projects/:project_id/features",
+            axum::routing::get(routes::rich_content::list_project_features))
+        .route("/projects/:project_id/contributors",
+            axum::routing::get(routes::rich_content::list_project_contributors))
+        .route("/events/:event_id/timeline",
+            axum::routing::get(routes::rich_content::list_event_timeline))
+        .route("/events/:event_id/prerequisites",
+            axum::routing::get(routes::rich_content::list_event_prerequisites))
+        .route("/users/:user_id/contributions",
+            axum::routing::get(routes::rich_content::list_team_contributions))
+        .layer(public_rate_limit.clone())
+        .layer(optional_auth_layer.clone());
+
+    let rich_content_protected = Router::new()
+        .route("/projects/:project_id/features",
+            axum::routing::post(routes::rich_content::create_project_feature))
         .route("/projects/:project_id/features/:feature_id",
             axum::routing::put(routes::rich_content::update_project_feature)
             .delete(routes::rich_content::delete_project_feature))
         .route("/projects/:project_id/features/reorder",
             axum::routing::patch(routes::rich_content::reorder_project_features))
         .route("/projects/:project_id/contributors",
-            axum::routing::get(routes::rich_content::list_project_contributors)
-            .post(routes::rich_content::add_project_contributor))
+            axum::routing::post(routes::rich_content::add_project_contributor))
         .route("/projects/:project_id/contributors/:contributor_id",
             axum::routing::delete(routes::rich_content::remove_project_contributor))
         .route("/events/:event_id/timeline",
-            axum::routing::get(routes::rich_content::list_event_timeline)
-            .post(routes::rich_content::create_event_timeline_item))
+            axum::routing::post(routes::rich_content::create_event_timeline_item))
         .route("/events/:event_id/timeline/:item_id",
             axum::routing::put(routes::rich_content::update_event_timeline_item)
             .delete(routes::rich_content::delete_event_timeline_item))
         .route("/events/:event_id/timeline/reorder",
             axum::routing::patch(routes::rich_content::reorder_event_timeline))
         .route("/events/:event_id/prerequisites",
-            axum::routing::get(routes::rich_content::list_event_prerequisites)
-            .post(routes::rich_content::create_event_prerequisite))
+            axum::routing::post(routes::rich_content::create_event_prerequisite))
         .route("/events/:event_id/prerequisites/:prereq_id",
             axum::routing::put(routes::rich_content::update_event_prerequisite)
             .delete(routes::rich_content::delete_event_prerequisite))
         .route("/events/:event_id/prerequisites/reorder",
             axum::routing::patch(routes::rich_content::reorder_event_prerequisites))
         .route("/users/:user_id/contributions",
-            axum::routing::get(routes::rich_content::list_team_contributions)
-            .post(routes::rich_content::create_team_contribution))
+            axum::routing::post(routes::rich_content::create_team_contribution))
         .route("/users/:user_id/contributions/:contribution_id",
             axum::routing::put(routes::rich_content::update_team_contribution)
             .delete(routes::rich_content::delete_team_contribution))
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
+
+    let rich_content_routes = rich_content_public.merge(rich_content_protected);
     
     // Build admin routes
     let admin_routes = routes::admin_routes::configure()
+        .layer(verification_layer.clone())
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
-    
-    // Build application router
-    Router::new()
+
+    // Root / health routes get the public rate-limit bucket so the
+    // DB-writing /health/db endpoint is not trivially abusable.
+    let root_routes = Router::new()
         .route("/", axum::routing::get(|| async { "SOCS Backend (Rust)" }))
         .route("/health", axum::routing::get(routes::health::health_check))
         .route("/health/db", axum::routing::get(routes::health::health_check_with_db))
+        .layer(public_rate_limit.clone());
+    
+    // Build application router
+    Router::new()
+        .merge(root_routes)
         .nest("/api/auth", auth_routes)
         .nest("/api/projects", project_routes)
         .nest("/api/events", event_routes)
@@ -334,5 +398,12 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
         .layer(cors)
         .layer(CompressionLayer::new())
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
+            tracing::info_span!(
+                "http_request",
+                method = %request.method(),
+                path = request.uri().path(),
+            )
+        }))
+        .layer(axum::middleware::from_fn(middleware::request_logging::log_request))
 }

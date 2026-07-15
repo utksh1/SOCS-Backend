@@ -1,10 +1,22 @@
-use lettre::{Message, SmtpTransport, Transport};
 use lettre::message::{MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
+use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use std::env;
 
+fn escape_html(value: &str) -> String {
+    html_escape::encode_text(value).to_string()
+}
+
+fn escape_href(value: &str) -> String {
+    html_escape::encode_double_quoted_attribute(value).to_string()
+}
+
+fn safe_subject(value: &str) -> String {
+    value.replace(['\r', '\n'], " ")
+}
+
 pub struct EmailService {
-    mailer: SmtpTransport,
+    mailer: AsyncSmtpTransport<Tokio1Executor>,
     from_email: String,
 }
 
@@ -12,23 +24,39 @@ impl EmailService {
     pub fn new() -> Result<Self, crate::error::ApiError> {
         // Gmail SMTP configuration
         let smtp_host = env::var("SMTP_HOST").unwrap_or_else(|_| "smtp.gmail.com".to_string());
+        let smtp_port = env::var("SMTP_PORT")
+            .unwrap_or_else(|_| "587".to_string())
+            .parse::<u16>()
+            .map_err(|_| {
+                tracing::error!("SMTP_PORT must be a valid u16");
+                crate::error::ApiError::ServiceUnavailable(
+                    "Email service is not configured".to_string(),
+                )
+            })?;
         let smtp_username = env::var("SMTP_USERNAME").map_err(|_| {
             tracing::error!("SMTP_USERNAME (Gmail address) must be set");
-            crate::error::ApiError::InternalServerError
+            crate::error::ApiError::ServiceUnavailable(
+                "Email service is not configured".to_string(),
+            )
         })?;
         let smtp_password = env::var("SMTP_PASSWORD").map_err(|_| {
             tracing::error!("SMTP_PASSWORD (Gmail app password) must be set");
-            crate::error::ApiError::InternalServerError
+            crate::error::ApiError::ServiceUnavailable(
+                "Email service is not configured".to_string(),
+            )
         })?;
         let from_email = env::var("FROM_EMAIL").unwrap_or_else(|_| smtp_username.clone());
 
         let creds = Credentials::new(smtp_username, smtp_password);
 
-        let mailer = SmtpTransport::relay(&smtp_host)
+        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp_host)
             .map_err(|e| {
                 tracing::error!("Failed to build SMTP transport: {:?}", e);
-                crate::error::ApiError::InternalServerError
+                crate::error::ApiError::ServiceUnavailable(
+                    "Email service is unavailable".to_string(),
+                )
             })?
+            .port(smtp_port)
             .credentials(creds)
             .build();
 
@@ -42,6 +70,13 @@ impl EmailService {
         experience_level: &str,
         skills: &[String],
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let name = escape_html(name);
+        let experience_level = escape_html(experience_level);
+        let skills = skills
+            .iter()
+            .map(|skill| escape_html(skill))
+            .collect::<Vec<_>>()
+            .join(", ");
         let html_body = format!(
             r#"
 <!DOCTYPE html>
@@ -74,19 +109,16 @@ impl EmailService {
 </body>
 </html>
 "#,
-            name, experience_level, skills.join(", ")
+            name, experience_level, skills
         );
 
         let email = Message::builder()
             .from(self.from_email.parse()?)
             .to(to_email.parse()?)
             .subject("Your SOCS Application Has Been Received")
-            .multipart(
-                MultiPart::alternative()
-                    .singlepart(SinglePart::html(html_body))
-            )?;
+            .multipart(MultiPart::alternative().singlepart(SinglePart::html(html_body)))?;
 
-        self.mailer.send(&email)?;
+        self.mailer.send(email).await?;
         Ok(())
     }
 
@@ -95,6 +127,7 @@ impl EmailService {
         to_email: &str,
         name: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let name = escape_html(name);
         let html_body = format!(
             r#"
 <!DOCTYPE html>
@@ -136,12 +169,9 @@ impl EmailService {
             .from(self.from_email.parse()?)
             .to(to_email.parse()?)
             .subject("Welcome to SOCS! Your Application Was Approved")
-            .multipart(
-                MultiPart::alternative()
-                    .singlepart(SinglePart::html(html_body))
-            )?;
+            .multipart(MultiPart::alternative().singlepart(SinglePart::html(html_body)))?;
 
-        self.mailer.send(&email)?;
+        self.mailer.send(email).await?;
         Ok(())
     }
 
@@ -150,6 +180,7 @@ impl EmailService {
         to_email: &str,
         name: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let name = escape_html(name);
         let html_body = format!(
             r#"
 <!DOCTYPE html>
@@ -190,12 +221,9 @@ impl EmailService {
             .from(self.from_email.parse()?)
             .to(to_email.parse()?)
             .subject("SOCS Application Update")
-            .multipart(
-                MultiPart::alternative()
-                    .singlepart(SinglePart::html(html_body))
-            )?;
+            .multipart(MultiPart::alternative().singlepart(SinglePart::html(html_body)))?;
 
-        self.mailer.send(&email)?;
+        self.mailer.send(email).await?;
         Ok(())
     }
 
@@ -207,6 +235,11 @@ impl EmailService {
         event_date: &str,
         event_location: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let name = escape_html(name);
+        let event_title_for_subject = safe_subject(event_title);
+        let event_title = escape_html(event_title);
+        let event_date = escape_html(event_date);
+        let event_location = escape_html(event_location);
         let html_body = format!(
             r#"
 <!DOCTYPE html>
@@ -246,13 +279,10 @@ impl EmailService {
         let email = Message::builder()
             .from(self.from_email.parse()?)
             .to(to_email.parse()?)
-            .subject(format!("You're Registered for {}", event_title))
-            .multipart(
-                MultiPart::alternative()
-                    .singlepart(SinglePart::html(html_body))
-            )?;
+            .subject(format!("You're Registered for {}", event_title_for_subject))
+            .multipart(MultiPart::alternative().singlepart(SinglePart::html(html_body)))?;
 
-        self.mailer.send(&email)?;
+        self.mailer.send(email).await?;
         Ok(())
     }
 
@@ -264,6 +294,11 @@ impl EmailService {
         subject: &str,
         message: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let name = escape_html(name);
+        let email = escape_html(email);
+        let subject_for_header = safe_subject(subject);
+        let subject = escape_html(subject);
+        let message = escape_html(message);
         let html_body = format!(
             r#"
 <!DOCTYPE html>
@@ -297,13 +332,10 @@ impl EmailService {
         let email_msg = Message::builder()
             .from(self.from_email.parse()?)
             .to(admin_email.parse()?)
-            .subject(format!("New Contact Form: {}", subject))
-            .multipart(
-                MultiPart::alternative()
-                    .singlepart(SinglePart::html(html_body))
-            )?;
+            .subject(format!("New Contact Form: {}", subject_for_header))
+            .multipart(MultiPart::alternative().singlepart(SinglePart::html(html_body)))?;
 
-        self.mailer.send(&email_msg)?;
+        self.mailer.send(email_msg).await?;
         Ok(())
     }
 
@@ -313,6 +345,9 @@ impl EmailService {
         name: &str,
         verification_link: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let name = escape_html(name);
+        let verification_link_text = escape_html(verification_link);
+        let verification_link_href = escape_href(verification_link);
         let html_body = format!(
             r#"
 <!DOCTYPE html>
@@ -345,19 +380,16 @@ impl EmailService {
 </body>
 </html>
 "#,
-            name, verification_link, verification_link
+            name, verification_link_href, verification_link_text
         );
 
         let email = Message::builder()
             .from(self.from_email.parse()?)
             .to(to_email.parse()?)
             .subject("Verify Your Email - SOCS")
-            .multipart(
-                MultiPart::alternative()
-                    .singlepart(SinglePart::html(html_body))
-            )?;
+            .multipart(MultiPart::alternative().singlepart(SinglePart::html(html_body)))?;
 
-        self.mailer.send(&email)?;
+        self.mailer.send(email).await?;
         Ok(())
     }
 
@@ -367,6 +399,9 @@ impl EmailService {
         name: &str,
         reset_link: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let name = escape_html(name);
+        let reset_link_text = escape_html(reset_link);
+        let reset_link_href = escape_href(reset_link);
         let html_body = format!(
             r#"
 <!DOCTYPE html>
@@ -399,19 +434,16 @@ impl EmailService {
 </body>
 </html>
 "#,
-            name, reset_link, reset_link
+            name, reset_link_href, reset_link_text
         );
 
         let email = Message::builder()
             .from(self.from_email.parse()?)
             .to(to_email.parse()?)
             .subject("Password Reset Request - SOCS")
-            .multipart(
-                MultiPart::alternative()
-                    .singlepart(SinglePart::html(html_body))
-            )?;
+            .multipart(MultiPart::alternative().singlepart(SinglePart::html(html_body)))?;
 
-        self.mailer.send(&email)?;
+        self.mailer.send(email).await?;
         Ok(())
     }
 
@@ -420,6 +452,7 @@ impl EmailService {
         to_email: &str,
         name: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let name = escape_html(name);
         let html_body = format!(
             r#"
 <!DOCTYPE html>
@@ -454,12 +487,31 @@ impl EmailService {
             .from(self.from_email.parse()?)
             .to(to_email.parse()?)
             .subject("Password Reset Confirmed - SOCS")
-            .multipart(
-                MultiPart::alternative()
-                    .singlepart(SinglePart::html(html_body))
-            )?;
+            .multipart(MultiPart::alternative().singlepart(SinglePart::html(html_body)))?;
 
-        self.mailer.send(&email)?;
+        self.mailer.send(email).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{escape_href, escape_html, safe_subject};
+
+    #[test]
+    fn escapes_untrusted_email_content() {
+        assert_eq!(
+            escape_html("<script>alert('x')</script>"),
+            "&lt;script&gt;alert('x')&lt;/script&gt;"
+        );
+        assert!(escape_href("https://example.test/?q=\" onclick=\"alert(1)").contains("&quot;"));
+    }
+
+    #[test]
+    fn removes_newlines_from_dynamic_subjects() {
+        assert_eq!(
+            safe_subject("event\r\nBcc: victim@example.test"),
+            "event  Bcc: victim@example.test"
+        );
     }
 }

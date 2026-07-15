@@ -1,8 +1,9 @@
-use axum::{extract::{Path, State}, Extension, Json};
+use axum::{extract::{Path, Query, State}, Extension, Json};
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
+    dto::pagination_dto::{PaginationParams, PaginationMeta},
     error::Result,
     models::user::SafeUser,
     repositories::{notification_repository, announcement_repository},
@@ -79,13 +80,15 @@ pub async fn delete_notification(
 // Get all announcements (public)
 pub async fn get_announcements(
     State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>> {
-    let announcements = announcement_repository::find_all(&state.db).await?;
+    Query(mut params): Query<PaginationParams>,
+) -> Result<impl axum::response::IntoResponse> {
+    params.validate();
     
-    Ok(Json(json!({
-        "success": true,
-        "data": announcements
-    })))
+    let total = announcement_repository::count_all(&state.db).await?;
+    let announcements = announcement_repository::find_all_paginated(&state.db, params.limit, params.offset()).await?;
+    let pagination = PaginationMeta::new(params.page, params.limit, total);
+    
+    Ok(crate::dto::response_dto::ApiResponse::success_paginated(announcements, pagination))
 }
 
 // Get single announcement (public)

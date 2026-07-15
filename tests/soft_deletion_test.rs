@@ -1,4 +1,5 @@
 use sqlx::PgPool;
+use socs_backend::services::project_service;
 
 // Integration tests for soft deletion functionality
 // Note: These tests use sqlx::test which automatically sets up and tears down test databases
@@ -30,8 +31,8 @@ async fn test_project_soft_delete_and_restore(pool: PgPool) -> sqlx::Result<()> 
     .bind("test-project")
     .bind("Test Project")
     .bind("A test project for soft deletion")
-    .bind(&vec!["Rust", "PostgreSQL"])
-    .bind(&vec!["test"])
+    .bind(vec!["Rust", "PostgreSQL"])
+    .bind(vec!["test"])
     .bind(false)
     .bind(user_id)
     .fetch_one(&pool)
@@ -206,8 +207,8 @@ async fn test_permanent_delete(pool: PgPool) -> sqlx::Result<()> {
     .bind("permanent-delete-test")
     .bind("Permanent Delete Test")
     .bind("A project to test permanent deletion")
-    .bind(&vec!["Rust"])
-    .bind(&vec!["test"])
+    .bind(vec!["Rust"])
+    .bind(vec!["test"])
     .bind(false)
     .bind(user_id)
     .fetch_one(&pool)
@@ -323,8 +324,8 @@ async fn test_soft_delete_idempotency(pool: PgPool) -> sqlx::Result<()> {
     .bind("idempotency-test")
     .bind("Idempotency Test")
     .bind("Test idempotent soft delete")
-    .bind(&vec!["Rust"])
-    .bind(&vec!["test"])
+    .bind(vec!["Rust"])
+    .bind(vec!["test"])
     .bind(false)
     .bind(user_id)
     .fetch_one(&pool)
@@ -380,15 +381,16 @@ async fn test_soft_delete_cascade_behavior(pool: PgPool) -> sqlx::Result<()> {
     .bind("cascade-test")
     .bind("Cascade Test")
     .bind("Test cascade behavior")
-    .bind(&vec!["Rust"])
-    .bind(&vec!["test"])
+    .bind(vec!["Rust"])
+    .bind(vec!["test"])
     .bind(false)
     .bind(user_id)
     .fetch_one(&pool)
     .await?;
 
-    // Add a project feature (if the table exists)
-    let feature_result = sqlx::query_scalar::<_, uuid::Uuid>(
+    // Add a project feature; it is intrinsic content and must be cascaded by
+    // the service transaction rather than exposed after its parent is deleted.
+    let feature_id = sqlx::query_scalar::<_, uuid::Uuid>(
         r#"
         INSERT INTO project_features (project_id, title, description, display_order)
         VALUES ($1, $2, $3, $4)
@@ -399,16 +401,12 @@ async fn test_soft_delete_cascade_behavior(pool: PgPool) -> sqlx::Result<()> {
     .bind("Test Feature")
     .bind("A test feature")
     .bind(0i32)
-    .fetch_optional(&pool)
-    .await;
-
-    // Soft delete the project
-    sqlx::query(
-        "UPDATE projects SET deleted_at = NOW() WHERE id = $1"
-    )
-    .bind(project_id)
-    .execute(&pool)
+    .fetch_one(&pool)
     .await?;
+
+    project_service::soft_delete_project(&pool, project_id)
+        .await
+        .expect("project soft delete should cascade to intrinsic content");
 
     // Verify project is soft deleted
     let deleted_at_check: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
@@ -420,17 +418,24 @@ async fn test_soft_delete_cascade_behavior(pool: PgPool) -> sqlx::Result<()> {
 
     assert!(deleted_at_check.is_some(), "Project should be soft deleted");
 
-    // If we created a feature, verify it's still accessible (soft delete doesn't cascade automatically)
-    if let Ok(Some(feature_id)) = feature_result {
-        let feature_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM project_features WHERE id = $1"
-        )
-        .bind(feature_id)
-        .fetch_one(&pool)
-        .await?;
+    let feature_deleted_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deleted_at FROM project_features WHERE id = $1"
+    )
+    .bind(feature_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(feature_deleted_at.is_some(), "Project features must be soft deleted with the project");
 
-        assert_eq!(feature_count, 1, "Project features should remain in database (soft delete doesn't cascade by default)");
-    }
+    project_service::restore_project(&pool, project_id)
+        .await
+        .expect("project restore should restore intrinsic content");
+    let restored_feature_deleted_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deleted_at FROM project_features WHERE id = $1"
+    )
+    .bind(feature_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(restored_feature_deleted_at.is_none(), "Project restore must restore its features");
 
     Ok(())
 }

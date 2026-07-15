@@ -1,4 +1,3 @@
-use reqwest;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -13,7 +12,7 @@ async fn test_auth_rate_limit_enforcement() {
     // Make 20 requests (should all succeed)
     for i in 1..=20 {
         let response = client
-            .post(&format!("{}/auth/login", BASE_URL))
+            .post(format!("{}/auth/login", BASE_URL))
             .json(&json!({
                 "email": "test@example.com",
                 "password": "wrongpassword"
@@ -27,7 +26,7 @@ async fn test_auth_rate_limit_enforcement() {
     
     // 21st request should be rate limited
     let response = client
-        .post(&format!("{}/auth/login", BASE_URL))
+        .post(format!("{}/auth/login", BASE_URL))
         .json(&json!({
             "email": "test@example.com",
             "password": "wrongpassword"
@@ -48,7 +47,7 @@ async fn test_rate_limit_headers() {
     let client = reqwest::Client::new();
     
     let response = client
-        .post(&format!("{}/auth/login", BASE_URL))
+        .post(format!("{}/auth/login", BASE_URL))
         .json(&json!({
             "email": "test@example.com",
             "password": "wrongpassword"
@@ -74,7 +73,7 @@ async fn test_token_refill() {
     // Consume some tokens
     for _ in 1..=5 {
         client
-            .post(&format!("{}/auth/login", BASE_URL))
+            .post(format!("{}/auth/login", BASE_URL))
             .json(&json!({
                 "email": "refill-test@example.com",
                 "password": "wrongpassword"
@@ -89,7 +88,7 @@ async fn test_token_refill() {
     
     // Should be able to make another request
     let response = client
-        .post(&format!("{}/auth/login", BASE_URL))
+        .post(format!("{}/auth/login", BASE_URL))
         .json(&json!({
             "email": "refill-test@example.com",
             "password": "wrongpassword"

@@ -3,6 +3,7 @@ use uuid::Uuid;
 use chrono::Utc;
 
 use crate::models::application::{Application, ApplicationStatus};
+use crate::utils::sanitize::normalize_email;
 
 pub async fn create(
     pool: &PgPool,
@@ -12,6 +13,7 @@ pub async fn create(
     skills: &[String],
     message: Option<&str>,
 ) -> Result<Application, sqlx::Error> {
+    let email = normalize_email(email);
     sqlx::query_as::<_, Application>(
         r#"
         INSERT INTO applications (name, email, experience_level, skills, message)
@@ -20,7 +22,7 @@ pub async fn create(
         "#,
     )
     .bind(name)
-    .bind(email)
+    .bind(&email)
     .bind(experience_level)
     .bind(skills)
     .bind(message)
@@ -79,7 +81,7 @@ pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
 
 pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
-        "UPDATE applications SET deleted_at = NULL WHERE id = $1"
+        "UPDATE applications SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL"
     )
     .bind(id)
     .execute(pool)
@@ -88,7 +90,7 @@ pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
 }
 
 pub async fn permanent_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM applications WHERE id = $1")
+    let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND deleted_at IS NOT NULL")
         .bind(id)
         .execute(pool)
         .await?;

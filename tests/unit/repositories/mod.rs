@@ -1,0 +1,13 @@
+pub mod user_repository_tests;
+pub mod project_repository_tests;
+pub mod event_repository_tests;
+pub mod blog_post_repository_tests;
+pub mod contact_repository_tests;
+pub mod application_repository_tests;
+pub mod event_registration_repository_tests;
+pub mod resource_repository_tests;
+pub mod visual_repository_tests;
+pub mod notification_repository_tests;
+pub mod announcement_repository_tests;
+pub mod verification_token_repository_tests;
+pub mod rate_limit_repository_tests;

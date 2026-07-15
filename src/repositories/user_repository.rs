@@ -1,7 +1,10 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::models::user::User;
+use crate::{
+    models::user::User,
+    utils::sanitize::normalize_email,
+};
 
 pub async fn create(
     pool: &PgPool,
@@ -9,6 +12,7 @@ pub async fn create(
     email: &str,
     password_hash: &str,
 ) -> Result<User, sqlx::Error> {
+    let email = normalize_email(email);
     sqlx::query_as::<_, User>(
         r#"
         INSERT INTO users (name, email, password, roles)
@@ -24,8 +28,9 @@ pub async fn create(
 }
 
 pub async fn find_by_email(pool: &PgPool, email: &str) -> Result<Option<User>, sqlx::Error> {
+    let email = normalize_email(email);
     sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL",
+        "SELECT * FROM users WHERE LOWER(BTRIM(email)) = $1 AND deleted_at IS NULL",
     )
     .bind(email)
     .fetch_optional(pool)
@@ -50,7 +55,7 @@ pub async fn update_profile_picture(
         r#"
         UPDATE users
         SET profile_picture = $1, updated_at = NOW()
-        WHERE id = $2
+        WHERE id = $2 AND deleted_at IS NULL
         "#,
     )
     .bind(profile_picture)
@@ -59,6 +64,36 @@ pub async fn update_profile_picture(
     .await?;
     
     Ok(())
+}
+
+pub async fn profile_picture_matches(
+    pool: &PgPool,
+    user_id: Uuid,
+    profile_picture: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND profile_picture = $2 AND deleted_at IS NULL)",
+    )
+    .bind(user_id)
+    .bind(profile_picture)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn clear_profile_picture(
+    pool: &PgPool,
+    user_id: Uuid,
+    profile_picture: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE users SET profile_picture = NULL, updated_at = NOW() WHERE id = $1 AND profile_picture = $2 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .bind(profile_picture)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
@@ -74,7 +109,7 @@ pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
 
 pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
-        "UPDATE users SET deleted_at = NULL WHERE id = $1"
+        "UPDATE users SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL"
     )
     .bind(id)
     .execute(pool)
@@ -84,7 +119,7 @@ pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
 }
 
 pub async fn permanent_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM users WHERE id = $1")
+    let result = sqlx::query("DELETE FROM users WHERE id = $1 AND deleted_at IS NOT NULL")
         .bind(id)
         .execute(pool)
         .await?;
@@ -108,7 +143,7 @@ pub async fn mark_email_verified(pool: &PgPool, user_id: Uuid) -> Result<User, s
         r#"
         UPDATE users
         SET email_verified_at = NOW(), updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         RETURNING *
         "#,
     )
@@ -135,7 +170,7 @@ pub async fn update_password(
         r#"
         UPDATE users
         SET password = $1, updated_at = NOW()
-        WHERE id = $2
+        WHERE id = $2 AND deleted_at IS NULL
         RETURNING *
         "#,
     )

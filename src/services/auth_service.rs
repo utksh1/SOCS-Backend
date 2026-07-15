@@ -7,6 +7,7 @@ use crate::{
     error::{ApiError, Result},
     models::user::SafeUser,
     repositories::user_repository,
+    utils::sanitize::{normalize_email, sanitize_plain_text},
     utils::jwt,
 };
 
@@ -16,24 +17,32 @@ pub async fn register(
     jwt_expires_in: i64,
     payload: RegisterDto,
 ) -> Result<AuthResponse> {
+    let email = normalize_email(&payload.email);
+
     // Check if email already exists
-    if user_repository::find_by_email(pool, &payload.email)
+    if user_repository::find_by_email(pool, &email)
         .await?
         .is_some()
     {
         return Err(ApiError::Conflict("Email already registered".to_string()));
     }
     
-    // Hash password
-    let password_hash = hash(&payload.password, DEFAULT_COST)
-        .map_err(|_| ApiError::InternalServerError)?;
+    // Hash password in a blocking task
+    let password_clone = payload.password.clone();
+    let password_hash = tokio::task::spawn_blocking(move || {
+        hash(&password_clone, DEFAULT_COST)
+    })
+    .await
+    .map_err(|_| ApiError::InternalServerError)?
+    .map_err(|_| ApiError::InternalServerError)?;
     
     // Create user with default Member role
-    let user = user_repository::create(pool, &payload.name, &payload.email, &password_hash).await?;
+    let name = sanitize_plain_text(&payload.name);
+    let user = user_repository::create(pool, &name, &email, &password_hash).await?;
     
-    // Generate token with highest role
+    // Generate token with highest role and token_version
     let highest_role = user.highest_role().clone();
-    let token = jwt::create_token(user.id, highest_role, jwt_secret, jwt_expires_in)
+    let token = jwt::create_token(user.id, highest_role, user.token_version, jwt_secret, jwt_expires_in)
         .map_err(|_| ApiError::InternalServerError)?;
     
     Ok(AuthResponse {
@@ -48,22 +57,30 @@ pub async fn login(
     jwt_expires_in: i64,
     payload: LoginDto,
 ) -> Result<AuthResponse> {
+    let email = normalize_email(&payload.email);
+
     // Find user by email
-    let user = user_repository::find_by_email(pool, &payload.email)
+    let user = user_repository::find_by_email(pool, &email)
         .await?
         .ok_or_else(|| ApiError::Unauthorized("Invalid credentials".to_string()))?;
     
-    // Verify password
-    let valid = verify(&payload.password, &user.password)
-        .map_err(|_| ApiError::InternalServerError)?;
+    // Verify password in a blocking task
+    let password_clone = payload.password.clone();
+    let user_password_clone = user.password.clone();
+    let valid = tokio::task::spawn_blocking(move || {
+        verify(&password_clone, &user_password_clone)
+    })
+    .await
+    .map_err(|_| ApiError::InternalServerError)?
+    .map_err(|_| ApiError::InternalServerError)?;
     
     if !valid {
         return Err(ApiError::Unauthorized("Invalid credentials".to_string()));
     }
     
-    // Generate token with highest role
+    // Generate token with highest role and token_version
     let highest_role = user.highest_role().clone();
-    let token = jwt::create_token(user.id, highest_role, jwt_secret, jwt_expires_in)
+    let token = jwt::create_token(user.id, highest_role, user.token_version, jwt_secret, jwt_expires_in)
         .map_err(|_| ApiError::InternalServerError)?;
     
     Ok(AuthResponse {

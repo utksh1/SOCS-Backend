@@ -10,14 +10,7 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["cors", "compression-gzip", "trace"] }
 
 # Database
-sqlx = { version = "0.7", features = [
-    "runtime-tokio",
-    "postgres",
-    "uuid",
-    "chrono",
-    "json",
-    "migrate"
-] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate"] }
 # Redis client with async support
 redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
 
@@ -35,13 +28,18 @@ validator = { version = "0.18", features = ["derive"] }
 # Crypto
 rand = "0.8"
 hex = "0.4"
+sha2 = "0.10"
+
+# Content sanitization and safe HTML interpolation
+ammonia = "4"
+html-escape = "0.2"
 
 # Environment
 dotenvy = "0.15"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
@@ -61,6 +59,8 @@ lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "hostna
 
 # Background jobs
 tokio-cron-scheduler = "0.10"
+image = "0.25.10"
+infer = "0.22.0"
 
 [dev-dependencies]
 reqwest = { version = "0.11", features = ["json"] }

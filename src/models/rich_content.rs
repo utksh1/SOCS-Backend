@@ -74,5 +74,5 @@ pub struct ProjectContributorWithMember {
     pub joined_at: DateTime<Utc>,
     pub member_name: String,
     pub member_avatar: Option<String>,
-    pub member_slug: String,
+    pub member_slug: Option<String>,
 }

@@ -59,6 +59,13 @@ pub fn sanitize_plain_text(text: &str) -> String {
     html_escape::encode_text(text).to_string()
 }
 
+/// Canonicalize an email address before it is used as an identity or a rate
+/// limit key. The application stores and compares emails in this form, so
+/// casing cannot create duplicate accounts or bypass per-address limits.
+pub fn normalize_email(email: &str) -> String {
+    email.trim().to_lowercase()
+}
+
 /// Strip all HTML tags from content, leaving only text
 /// Useful for excerpts or preview text
 pub fn strip_html_tags(content: &str) -> String {
@@ -92,6 +99,5 @@ pub fn sanitize_url(url: &str) -> Option<String> {
         None
     }
 }
-
 
 

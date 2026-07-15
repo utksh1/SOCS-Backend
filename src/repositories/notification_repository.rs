@@ -67,7 +67,7 @@ pub async fn soft_delete(pool: &PgPool, id: Uuid, user_id: Uuid) -> Result<bool,
 
 pub async fn restore(pool: &PgPool, id: Uuid, user_id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
-        "UPDATE notifications SET deleted_at = NULL WHERE id = $1 AND user_id = $2"
+        "UPDATE notifications SET deleted_at = NULL WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL"
     )
     .bind(id)
     .bind(user_id)
@@ -78,7 +78,7 @@ pub async fn restore(pool: &PgPool, id: Uuid, user_id: Uuid) -> Result<bool, sql
 
 pub async fn permanent_delete(pool: &PgPool, id: Uuid, user_id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
-        "DELETE FROM notifications WHERE id = $1 AND user_id = $2"
+        "DELETE FROM notifications WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL"
     )
     .bind(id)
     .bind(user_id)

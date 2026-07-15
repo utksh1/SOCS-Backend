@@ -9,7 +9,7 @@ use tracing_subscriber::{
 /// Supports both pretty console output for development and JSON for production
 pub fn init_telemetry(env: &str) {
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("socs_backend=debug,tower_http=debug,sqlx=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("socs_backend=debug,tower_http=info,sqlx=warn"));
 
     let is_production = env == "production";
 

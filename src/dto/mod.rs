@@ -6,6 +6,7 @@ pub mod event_dto;
 pub mod event_registration_dto;
 pub mod pagination_dto;
 pub mod project_dto;
+pub mod response_dto;
 pub mod resource_dto;
 pub mod rich_content_dto;
 

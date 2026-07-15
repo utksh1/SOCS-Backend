@@ -1,7 +1,8 @@
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 
 use crate::models::verification_token::TokenType;
+use crate::utils::sanitize::normalize_email;
 
 /// Check rate limit and increment counter if allowed
 /// Returns true if request is allowed, false if rate limit exceeded
@@ -13,8 +14,8 @@ pub async fn check_and_increment(
     max_attempts: i32,
     window_hours: i32,
 ) -> Result<bool, sqlx::Error> {
-    // Calculate window start time
-    let window_start = Utc::now() - Duration::hours(window_hours as i64);
+    let email = normalize_email(email);
+    let window_start = current_window_start(Utc::now(), window_hours);
     
     // Clean up old records for this email/type combination first
     sqlx::query(
@@ -25,7 +26,7 @@ pub async fn check_and_increment(
         AND window_start < $3
         "#,
     )
-    .bind(email)
+    .bind(&email)
     .bind(token_type.as_str())
     .bind(window_start)
     .execute(pool)
@@ -43,7 +44,7 @@ pub async fn check_and_increment(
         RETURNING attempt_count
         "#,
     )
-    .bind(email)
+    .bind(&email)
     .bind(token_type.as_str())
     .bind(window_start)
     .bind(max_attempts)
@@ -120,7 +121,8 @@ pub async fn get_attempt_count(
     token_type: TokenType,
     window_hours: i32,
 ) -> Result<i32, sqlx::Error> {
-    let window_start = Utc::now() - Duration::hours(window_hours as i64);
+    let email = normalize_email(email);
+    let window_start = current_window_start(Utc::now(), window_hours);
 
     let count: Option<(i32,)> = sqlx::query_as(
         r#"
@@ -137,4 +139,27 @@ pub async fn get_attempt_count(
     .await?;
 
     Ok(count.map(|(c,)| c).unwrap_or(0))
+}
+
+fn current_window_start(now: DateTime<Utc>, window_hours: i32) -> DateTime<Utc> {
+    let window_seconds = i64::from(window_hours.max(1)) * 60 * 60;
+    let timestamp = now.timestamp();
+    let start = timestamp - timestamp.rem_euclid(window_seconds);
+
+    DateTime::from_timestamp(start, 0).expect("a valid Unix timestamp should produce a DateTime")
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone, Utc};
+
+    use super::current_window_start;
+
+    #[test]
+    fn uses_one_stable_window_for_all_requests_in_the_hour() {
+        let first = Utc.with_ymd_and_hms(2026, 7, 15, 10, 1, 0).unwrap();
+        let second = Utc.with_ymd_and_hms(2026, 7, 15, 10, 59, 59).unwrap();
+
+        assert_eq!(current_window_start(first, 1), current_window_start(second, 1));
+    }
 }

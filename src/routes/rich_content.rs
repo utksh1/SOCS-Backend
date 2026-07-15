@@ -4,6 +4,7 @@ use axum::{
     Extension, Json,
 };
 use serde_json::json;
+use crate::dto::response_dto::ApiResponse;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -21,7 +22,7 @@ use crate::{
 pub async fn list_project_features(
     State(state): State<AppState>,
     Path(project_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
     let features = sqlx::query_as::<_, ProjectFeature>(
         "SELECT * FROM project_features WHERE project_id = $1 ORDER BY display_order ASC"
     )
@@ -29,10 +30,7 @@ pub async fn list_project_features(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": features
-    })))
+    Ok(ApiResponse::success(features))
 }
 
 pub async fn create_project_feature(
@@ -40,7 +38,7 @@ pub async fn create_project_feature(
     Extension(_user): Extension<SafeUser>,
     Path(project_id): Path<Uuid>,
     Json(payload): Json<CreateProjectFeatureDto>,
-) -> Result<(StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl axum::response::IntoResponse> {
     payload.validate()?;
     
     // Check permission
@@ -70,7 +68,7 @@ pub async fn update_project_feature(
     Extension(_user): Extension<SafeUser>,
     Path((project_id, feature_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdateProjectFeatureDto>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
     payload.validate()?;
     
 
@@ -93,17 +91,14 @@ pub async fn update_project_feature(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": feature
-    })))
+    Ok(ApiResponse::success(feature))
 }
 
 pub async fn delete_project_feature(
     State(state): State<AppState>,
     Extension(_user): Extension<SafeUser>,
     Path((project_id, feature_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
 
     let result = sqlx::query(
         "DELETE FROM project_features WHERE id = $1 AND project_id = $2"
@@ -117,10 +112,7 @@ pub async fn delete_project_feature(
         return Err(crate::error::ApiError::NotFound("Feature not found".to_string()));
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Feature deleted"
-    })))
+    Ok(ApiResponse::success_with_message("Feature deleted", json!({})))
 }
 
 pub async fn reorder_project_features(
@@ -128,7 +120,7 @@ pub async fn reorder_project_features(
     Extension(_user): Extension<SafeUser>,
     Path(project_id): Path<Uuid>,
     Json(payload): Json<ReorderItemsDto>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
 
     for item in &payload.items {
         let id = Uuid::parse_str(&item.id)
@@ -144,10 +136,7 @@ pub async fn reorder_project_features(
         .await?;
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Features reordered"
-    })))
+    Ok(ApiResponse::success_with_message("Features reordered", json!({})))
 }
 
 // ============================================================================
@@ -157,7 +146,7 @@ pub async fn reorder_project_features(
 pub async fn list_project_contributors(
     State(state): State<AppState>,
     Path(project_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
     let contributors = sqlx::query_as::<_, ProjectContributorWithMember>(
         r#"
         SELECT 
@@ -173,10 +162,7 @@ pub async fn list_project_contributors(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": contributors
-    })))
+    Ok(ApiResponse::success(contributors))
 }
 
 pub async fn add_project_contributor(
@@ -184,7 +170,7 @@ pub async fn add_project_contributor(
     Extension(_user): Extension<SafeUser>,
     Path(project_id): Path<Uuid>,
     Json(payload): Json<CreateProjectContributorDto>,
-) -> Result<(StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl axum::response::IntoResponse> {
     payload.validate()?;
     
 
@@ -214,7 +200,7 @@ pub async fn remove_project_contributor(
     State(state): State<AppState>,
     Extension(_user): Extension<SafeUser>,
     Path((project_id, contributor_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
 
     let result = sqlx::query(
         "DELETE FROM project_contributors WHERE id = $1 AND project_id = $2"
@@ -228,10 +214,7 @@ pub async fn remove_project_contributor(
         return Err(crate::error::ApiError::NotFound("Contributor not found".to_string()));
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Contributor removed"
-    })))
+    Ok(ApiResponse::success_with_message("Contributor removed", json!({})))
 }
 
 // ============================================================================
@@ -241,7 +224,7 @@ pub async fn remove_project_contributor(
 pub async fn list_event_timeline(
     State(state): State<AppState>,
     Path(event_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
     let timeline = sqlx::query_as::<_, EventTimelineItem>(
         "SELECT * FROM event_timeline_items WHERE event_id = $1 ORDER BY display_order ASC"
     )
@@ -249,10 +232,7 @@ pub async fn list_event_timeline(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": timeline
-    })))
+    Ok(ApiResponse::success(timeline))
 }
 
 pub async fn create_event_timeline_item(
@@ -260,7 +240,7 @@ pub async fn create_event_timeline_item(
     Extension(_user): Extension<SafeUser>,
     Path(event_id): Path<Uuid>,
     Json(payload): Json<CreateEventTimelineDto>,
-) -> Result<(StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl axum::response::IntoResponse> {
     payload.validate()?;
     
 
@@ -290,7 +270,7 @@ pub async fn update_event_timeline_item(
     Extension(_user): Extension<SafeUser>,
     Path((event_id, item_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdateEventTimelineDto>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
     payload.validate()?;
     
 
@@ -315,17 +295,14 @@ pub async fn update_event_timeline_item(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": item
-    })))
+    Ok(ApiResponse::success(item))
 }
 
 pub async fn delete_event_timeline_item(
     State(state): State<AppState>,
     Extension(_user): Extension<SafeUser>,
     Path((event_id, item_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
 
     let result = sqlx::query(
         "DELETE FROM event_timeline_items WHERE id = $1 AND event_id = $2"
@@ -339,10 +316,7 @@ pub async fn delete_event_timeline_item(
         return Err(crate::error::ApiError::NotFound("Timeline item not found".to_string()));
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Timeline item deleted"
-    })))
+    Ok(ApiResponse::success_with_message("Timeline item deleted", json!({})))
 }
 
 pub async fn reorder_event_timeline(
@@ -350,7 +324,7 @@ pub async fn reorder_event_timeline(
     Extension(_user): Extension<SafeUser>,
     Path(event_id): Path<Uuid>,
     Json(payload): Json<ReorderItemsDto>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
 
     for item in &payload.items {
         let id = Uuid::parse_str(&item.id)
@@ -366,10 +340,7 @@ pub async fn reorder_event_timeline(
         .await?;
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Timeline reordered"
-    })))
+    Ok(ApiResponse::success_with_message("Timeline reordered", json!({})))
 }
 
 // ============================================================================
@@ -379,7 +350,7 @@ pub async fn reorder_event_timeline(
 pub async fn list_event_prerequisites(
     State(state): State<AppState>,
     Path(event_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
     let prerequisites = sqlx::query_as::<_, EventPrerequisite>(
         "SELECT * FROM event_prerequisites WHERE event_id = $1 ORDER BY display_order ASC"
     )
@@ -387,10 +358,7 @@ pub async fn list_event_prerequisites(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": prerequisites
-    })))
+    Ok(ApiResponse::success(prerequisites))
 }
 
 pub async fn create_event_prerequisite(
@@ -398,7 +366,7 @@ pub async fn create_event_prerequisite(
     Extension(_user): Extension<SafeUser>,
     Path(event_id): Path<Uuid>,
     Json(payload): Json<CreateEventPrerequisiteDto>,
-) -> Result<(StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl axum::response::IntoResponse> {
     payload.validate()?;
     
 
@@ -427,7 +395,7 @@ pub async fn update_event_prerequisite(
     Extension(_user): Extension<SafeUser>,
     Path((event_id, prereq_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdateEventPrerequisiteDto>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
     payload.validate()?;
     
 
@@ -450,17 +418,14 @@ pub async fn update_event_prerequisite(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": prerequisite
-    })))
+    Ok(ApiResponse::success(prerequisite))
 }
 
 pub async fn delete_event_prerequisite(
     State(state): State<AppState>,
     Extension(_user): Extension<SafeUser>,
     Path((event_id, prereq_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
 
     let result = sqlx::query(
         "DELETE FROM event_prerequisites WHERE id = $1 AND event_id = $2"
@@ -474,10 +439,7 @@ pub async fn delete_event_prerequisite(
         return Err(crate::error::ApiError::NotFound("Prerequisite not found".to_string()));
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Prerequisite deleted"
-    })))
+    Ok(ApiResponse::success_with_message("Prerequisite deleted", json!({})))
 }
 
 pub async fn reorder_event_prerequisites(
@@ -485,7 +447,7 @@ pub async fn reorder_event_prerequisites(
     Extension(_user): Extension<SafeUser>,
     Path(event_id): Path<Uuid>,
     Json(payload): Json<ReorderItemsDto>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
 
     for item in &payload.items {
         let id = Uuid::parse_str(&item.id)
@@ -501,10 +463,7 @@ pub async fn reorder_event_prerequisites(
         .await?;
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Prerequisites reordered"
-    })))
+    Ok(ApiResponse::success_with_message("Prerequisites reordered", json!({})))
 }
 
 // ============================================================================
@@ -514,7 +473,7 @@ pub async fn reorder_event_prerequisites(
 pub async fn list_team_contributions(
     State(state): State<AppState>,
     Path(member_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
     let contributions = sqlx::query_as::<_, TeamContribution>(
         "SELECT * FROM team_contributions WHERE team_member_id = $1 ORDER BY contribution_date DESC"
     )
@@ -522,10 +481,7 @@ pub async fn list_team_contributions(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": contributions
-    })))
+    Ok(ApiResponse::success(contributions))
 }
 
 pub async fn create_team_contribution(
@@ -533,7 +489,7 @@ pub async fn create_team_contribution(
     Extension(_user): Extension<SafeUser>,
     Path(member_id): Path<Uuid>,
     Json(payload): Json<CreateTeamContributionDto>,
-) -> Result<(StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl axum::response::IntoResponse> {
     payload.validate()?;
     
 
@@ -567,7 +523,7 @@ pub async fn update_team_contribution(
     Extension(_user): Extension<SafeUser>,
     Path((member_id, contribution_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdateTeamContributionDto>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
     payload.validate()?;
     
 
@@ -601,17 +557,14 @@ pub async fn update_team_contribution(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": contribution
-    })))
+    Ok(ApiResponse::success(contribution))
 }
 
 pub async fn delete_team_contribution(
     State(state): State<AppState>,
     Extension(_user): Extension<SafeUser>,
     Path((member_id, contribution_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<impl axum::response::IntoResponse> {
 
     let result = sqlx::query(
         "DELETE FROM team_contributions WHERE id = $1 AND team_member_id = $2"
@@ -625,8 +578,5 @@ pub async fn delete_team_contribution(
         return Err(crate::error::ApiError::NotFound("Contribution not found".to_string()));
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Contribution deleted"
-    })))
+    Ok(ApiResponse::success_with_message("Contribution deleted", json!({})))
 }

@@ -1,7 +1,4 @@
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
+use axum::http::StatusCode;
 use serde_json::json;
 use sqlx::PgPool;
 
@@ -24,7 +21,7 @@ async fn test_register_success(pool: PgPool) {
         .await
         .expect("Failed to create toplead");
     
-    let token = AuthFixture::generate_token(toplead.id, "test_jwt_secret_key_12345");
+    let token = AuthFixture::generate_token_with_role(toplead.id, socs_backend::models::user::UserRole::TopLead, "test_secret_key_12345");
     
     let payload = json!({
         "name": "New User",
@@ -38,7 +35,7 @@ async fn test_register_success(pool: PgPool) {
     
     let body = response_json(response).await;
     assert_eq!(body["success"], true);
-    assert_eq!(body["message"], "User registered successfully");
+    assert_eq!(body["message"], "User registered successfully. Please check your email to verify your account.");
     assert!(body["data"]["token"].is_string());
     assert_eq!(body["data"]["user"]["email"], "newuser@test.com");
     assert_eq!(body["data"]["user"]["name"], "New User");
@@ -55,7 +52,7 @@ async fn test_register_validation_short_name(pool: PgPool) {
         .await
         .expect("Failed to create toplead");
     
-    let token = AuthFixture::generate_token(toplead.id, "test_jwt_secret_key_12345");
+    let token = AuthFixture::generate_token_with_role(toplead.id, socs_backend::models::user::UserRole::TopLead, "test_secret_key_12345");
     
     let payload = json!({
         "name": "A",  // Too short (min 2)
@@ -79,7 +76,7 @@ async fn test_register_validation_invalid_email(pool: PgPool) {
         .await
         .expect("Failed to create toplead");
     
-    let token = AuthFixture::generate_token(toplead.id, "test_jwt_secret_key_12345");
+    let token = AuthFixture::generate_token_with_role(toplead.id, socs_backend::models::user::UserRole::TopLead, "test_secret_key_12345");
     
     let payload = json!({
         "name": "Test User",
@@ -103,7 +100,7 @@ async fn test_register_validation_short_password(pool: PgPool) {
         .await
         .expect("Failed to create toplead");
     
-    let token = AuthFixture::generate_token(toplead.id, "test_jwt_secret_key_12345");
+    let token = AuthFixture::generate_token_with_role(toplead.id, socs_backend::models::user::UserRole::TopLead, "test_secret_key_12345");
     
     let payload = json!({
         "name": "Test User",
@@ -135,7 +132,7 @@ async fn test_register_duplicate_email(pool: PgPool) {
         .await
         .expect("Failed to create toplead");
     
-    let token = AuthFixture::generate_token(toplead.id, "test_jwt_secret_key_12345");
+    let token = AuthFixture::generate_token_with_role(toplead.id, socs_backend::models::user::UserRole::TopLead, "test_secret_key_12345");
     
     let payload = json!({
         "name": "Another User",
@@ -161,7 +158,7 @@ async fn test_register_requires_toplead(pool: PgPool) {
         .await
         .expect("Failed to create member");
     
-    let token = AuthFixture::generate_token(member.id, "test_jwt_secret_key_12345");
+    let token = AuthFixture::generate_token_with_role(member.id, socs_backend::models::user::UserRole::Member, "test_secret_key_12345");
     
     let payload = json!({
         "name": "New User",
@@ -272,7 +269,7 @@ async fn test_get_me_with_valid_token(pool: PgPool) {
         .await
         .expect("Failed to create user");
     
-    let token = AuthFixture::generate_token(user.id, "test_jwt_secret_key_12345");
+    let token = AuthFixture::generate_token(user.id, "test_secret_key_12345");
     
     let response = make_request(app, "GET", "/api/auth/me", Some(&token), None).await;
     
@@ -296,7 +293,7 @@ async fn test_get_me_with_expired_token(pool: PgPool) {
         .await
         .expect("Failed to create user");
     
-    let expired_token = AuthFixture::generate_expired_token(user.id, "test_jwt_secret_key_12345");
+    let expired_token = AuthFixture::generate_expired_token(user.id, "test_secret_key_12345");
     
     let response = make_request(app, "GET", "/api/auth/me", Some(&expired_token), None).await;
     

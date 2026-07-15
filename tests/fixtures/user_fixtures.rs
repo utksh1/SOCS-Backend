@@ -40,32 +40,16 @@ impl UserFixture {
     }
     
     pub fn role(mut self, role: UserRole) -> Self {
-        self.roles = vec![role];
-        self
-    }
-    
-    pub fn roles(mut self, roles: Vec<UserRole>) -> Self {
-        self.roles = roles;
+        if role != UserRole::Member {
+            self.roles = vec![role, UserRole::Member];
+        } else {
+            self.roles = vec![role];
+        }
         self
     }
     
     pub fn password(mut self, password: impl Into<String>) -> Self {
         self.password = password.into();
-        self
-    }
-    
-    pub fn slug(mut self, slug: impl Into<String>) -> Self {
-        self.slug = Some(slug.into());
-        self
-    }
-    
-    pub fn position(mut self, position: impl Into<String>) -> Self {
-        self.position = Some(position.into());
-        self
-    }
-    
-    pub fn bio(mut self, bio: impl Into<String>) -> Self {
-        self.bio = Some(bio.into());
         self
     }
     
@@ -79,9 +63,9 @@ impl UserFixture {
         let record = sqlx::query!(
             r#"
             INSERT INTO users (
-                id, email, name, password, roles, slug, position, bio, created_at, updated_at
+                id, email, name, password, roles, slug, position, bio, email_verified_at, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING 
                 id, email, name, 
                 roles as "roles: Vec<UserRole>",
@@ -98,8 +82,9 @@ impl UserFixture {
             self.slug,
             self.position,
             self.bio,
-            now,
-            now
+            now, // email_verified_at
+            now, // created_at
+            now  // updated_at
         )
         .fetch_one(pool)
         .await?;
@@ -109,6 +94,7 @@ impl UserFixture {
             id: record.id,
             email: record.email,
             name: record.name,
+            token_version: 0,
             roles: record.roles,
             role: None, // Computed field
             email_verified_at: record.email_verified_at,

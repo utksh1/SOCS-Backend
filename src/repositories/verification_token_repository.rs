@@ -59,23 +59,22 @@ pub async fn find_by_hash(
 pub async fn mark_as_used(
     pool: &PgPool,
     token_id: Uuid,
-) -> Result<VerificationToken, sqlx::Error> {
+) -> Result<Option<VerificationToken>, sqlx::Error> {
     let token = sqlx::query_as::<_, VerificationToken>(
         r#"
         UPDATE verification_tokens
         SET used_at = NOW()
-        WHERE id = $1
+        WHERE id = $1 AND used_at IS NULL AND expires_at > NOW()
         RETURNING *
         "#,
     )
     .bind(token_id)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await?;
 
-    tracing::info!(
-        token_id = %token_id,
-        "Token marked as used"
-    );
+    if token.is_some() {
+        tracing::info!(token_id = %token_id, "Token marked as used");
+    }
 
     Ok(token)
 }
@@ -108,6 +107,31 @@ pub async fn delete_user_tokens(
     );
 
     Ok(rows_affected)
+}
+
+/// Remove every token of a type except the one that was just delivered.
+/// Keeping the previously delivered token until the replacement email has
+/// actually been accepted by SMTP avoids locking a user out on a mail outage.
+#[tracing::instrument(name = "delete_other_user_tokens", skip(pool))]
+pub async fn delete_other_user_tokens(
+    pool: &PgPool,
+    user_id: Uuid,
+    token_type: TokenType,
+    keep_token_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM verification_tokens
+        WHERE user_id = $1 AND token_type = $2 AND id <> $3
+        "#,
+    )
+    .bind(user_id)
+    .bind(token_type.as_str())
+    .bind(keep_token_id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
 /// Clean up expired and used tokens (for scheduled cleanup)

@@ -57,11 +57,13 @@ pub async fn create_user(
     // Check if creator has permission to create users
     crate::middleware::auth::can_create_delete_users(&creator)?;
     
-    // Ensure user has at least Member role
+    // Ensure user has at least Member role and deduplicate
     let mut roles = payload.roles;
     if !roles.contains(&crate::models::user::UserRole::Member) {
         roles.push(crate::models::user::UserRole::Member);
     }
+    roles.sort_by_key(|r| r.level());
+    roles.dedup();
     
     // Check if creator can assign all requested roles
     crate::middleware::auth::can_assign_roles(&creator, &roles)?;
@@ -73,12 +75,26 @@ pub async fn create_user(
         ));
     }
     
-    // Hash password
-    let password_hash = bcrypt::hash(&payload.password, bcrypt::DEFAULT_COST)
-        .map_err(|_| crate::error::ApiError::InternalServerError)?;
+    // Hash password in a blocking task
+    let password_clone = payload.password.clone();
+    let password_hash = tokio::task::spawn_blocking(move || {
+        bcrypt::hash(&password_clone, bcrypt::DEFAULT_COST)
+    })
+    .await
+    .map_err(|_| crate::error::ApiError::InternalServerError)?
+    .map_err(|_| crate::error::ApiError::InternalServerError)?;
     
-    // Generate slug from name
-    let slug = crate::utils::slugify::slugify(&payload.name);
+    // Generate unique slug from name
+    let mut slug = crate::utils::slugify::slugify(&payload.name);
+    let mut attempt = 0;
+    while sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE slug = $1")
+        .bind(&slug)
+        .fetch_one(&state.db)
+        .await? > 0
+    {
+        attempt += 1;
+        slug = format!("{}-{}", crate::utils::slugify::slugify(&payload.name), attempt);
+    }
     
     // Create user with specified roles and profile
     let user = sqlx::query_as::<_, SafeUser>(
@@ -100,6 +116,22 @@ pub async fn create_user(
     .bind(&payload.linkedin)
     .fetch_one(&state.db)
     .await?;
+    
+    // Trigger verification email for the new user
+    if let Ok(Some(full_user)) = user_repository::find_by_id(&state.db, user.id).await {
+        if let Ok(email_service) = crate::services::email_service::EmailService::new() {
+            if let Err(e) = crate::services::verification_service::send_verification_email(
+                &state.db,
+                &state.config,
+                &email_service,
+                &full_user,
+            )
+            .await
+            {
+                tracing::error!(error = ?e, user_id = %user.id, "Failed to send verification email to admin-created user");
+            }
+        }
+    }
     
     Ok(Json(json!({
         "success": true,
@@ -166,11 +198,13 @@ pub async fn update_user(
     
     // If updating roles, check if updater can assign all new roles
     if let Some(ref new_roles) = payload.roles {
-        // Ensure Member role is included
+        // Ensure Member role is included and deduplicate
         let mut roles = new_roles.clone();
         if !roles.contains(&crate::models::user::UserRole::Member) {
             roles.push(crate::models::user::UserRole::Member);
         }
+        roles.sort_by_key(|r| r.level());
+        roles.dedup();
         
         crate::middleware::auth::can_assign_roles(&updater, &roles)?;
     }
@@ -233,11 +267,13 @@ pub async fn update_user(
         query = query.bind(name);
     }
     if let Some(roles) = &payload.roles {
-        // Ensure Member is included
+        // Ensure Member is included and deduplicate
         let mut final_roles = roles.clone();
         if !final_roles.contains(&crate::models::user::UserRole::Member) {
             final_roles.push(crate::models::user::UserRole::Member);
         }
+        final_roles.sort_by_key(|r| r.level());
+        final_roles.dedup();
         query = query.bind(final_roles);
     }
     if let Some(position) = &payload.position {

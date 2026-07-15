@@ -24,6 +24,7 @@ pub struct CleanupStats {
     pub notifications_purged: usize,
     pub resources_purged: usize,
     pub visuals_purged: usize,
+    pub orphaned_images_purged: usize,
     pub total_purged: usize,
 }
 
@@ -37,10 +38,17 @@ pub async fn start_cleanup_scheduler(pool: PgPool) -> Result<(), Box<dyn std::er
             info!("Starting scheduled cleanup of expired soft-deleted records");
             match cleanup_expired_soft_deletes(&pool).await {
                 Ok(stats) => {
-                    info!(
-                        "Cleanup completed successfully: {:?}",
-                        stats
-                    );
+                    info!("Soft-delete cleanup completed successfully: {:?}", stats);
+                }
+                Err(e) => {
+                    error!("Soft-delete cleanup failed: {}", e);
+                }
+            }
+            
+            info!("Starting scheduled cleanup of orphaned images");
+            match cleanup_orphaned_images(&pool).await {
+                Ok(count) => {
+                    info!("Orphaned image cleanup completed: {} images purged", count);
                 }
                 Err(e) => {
                     error!("Cleanup failed: {}", e);
@@ -53,6 +61,12 @@ pub async fn start_cleanup_scheduler(pool: PgPool) -> Result<(), Box<dyn std::er
     scheduler.start().await?;
 
     info!("Cleanup scheduler started (runs daily at 2 AM)");
+
+    // JobScheduler stops when its handle is dropped. This function is spawned
+    // from main, so keep the handle alive for the lifetime of the process.
+    std::future::pending::<()>().await;
+
+    #[allow(unreachable_code)]
     Ok(())
 }
 
@@ -71,12 +85,13 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
         notifications_purged: 0,
         resources_purged: 0,
         visuals_purged: 0,
+        orphaned_images_purged: 0,
         total_purged: 0,
     };
 
     // Clean up projects (cascade delete)
     let project_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM projects WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id FROM projects WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -92,7 +107,7 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
 
     // Clean up events (cascade delete)
     let event_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM events WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id FROM events WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -108,7 +123,7 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
 
     // Clean up announcements
     let announcement_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM announcements WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id FROM announcements WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -124,7 +139,7 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
 
     // Clean up applications
     let application_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM applications WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id FROM applications WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -140,7 +155,7 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
 
     // Clean up blog posts
     let blog_post_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM blog_posts WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id FROM blog_posts WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -156,7 +171,7 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
 
     // Clean up contacts
     let contact_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM contacts WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id FROM contacts WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -172,7 +187,7 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
 
     // Clean up event registrations
     let event_registration_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM event_registrations WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id FROM event_registrations WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -188,7 +203,7 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
 
     // Clean up notifications (requires user_id, so we query it first)
     let notification_data: Vec<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT id, user_id FROM notifications WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id, user_id FROM notifications WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -204,7 +219,7 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
 
     // Clean up resources
     let resource_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM resources WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id FROM resources WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -220,7 +235,7 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
 
     // Clean up visuals
     let visual_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM visuals WHERE deleted_at IS NOT NULL AND deleted_at < $1",
+        "SELECT id FROM visuals WHERE deleted_at IS NOT NULL AND deleted_at < $1 FOR UPDATE SKIP LOCKED",
     )
     .bind(cutoff_date)
     .fetch_all(pool)
@@ -247,4 +262,62 @@ pub async fn cleanup_expired_soft_deletes(pool: &PgPool) -> Result<CleanupStats,
         + stats.visuals_purged;
 
     Ok(stats)
+}
+
+/// Clean up orphaned images (older than 7 days and not referenced)
+pub async fn cleanup_orphaned_images(pool: &PgPool) -> Result<usize, Box<dyn std::error::Error>> {
+    let cutoff_date = Utc::now() - Duration::days(7);
+    
+    // Find uploaded images that are older than 7 days and don't seem to be referenced
+    // Note: this is a heuristic query since rich content can embed URLs
+    use sqlx::Row;
+    let orphaned_images = sqlx::query(
+        r#"
+        SELECT id, url FROM uploaded_images 
+        WHERE created_at < $1
+        AND NOT EXISTS (SELECT 1 FROM users WHERE profile_picture = url OR avatar_url = url)
+        AND NOT EXISTS (SELECT 1 FROM projects WHERE cover_image = url OR content LIKE '%' || url || '%')
+        AND NOT EXISTS (SELECT 1 FROM events WHERE cover_image = url OR content LIKE '%' || url || '%')
+        AND NOT EXISTS (SELECT 1 FROM blog_posts WHERE cover_image = url OR content LIKE '%' || url || '%')
+        AND NOT EXISTS (SELECT 1 FROM announcements WHERE content LIKE '%' || url || '%')
+        FOR UPDATE SKIP LOCKED
+        "#
+    )
+    .bind(cutoff_date)
+    .fetch_all(pool)
+    .await?;
+    
+    if orphaned_images.is_empty() {
+        return Ok(0);
+    }
+    
+    let r2_client = match crate::services::r2_service::R2Client::new() {
+        Ok(client) => client,
+        Err(e) => {
+            error!("Failed to initialize R2Client for image cleanup: {:?}", e);
+            return Ok(0);
+        }
+    };
+    
+    let mut count = 0;
+    for image in orphaned_images {
+        let id: Uuid = image.get("id");
+        let url: String = image.get("url");
+        
+        // Try to delete from S3
+        if let Err(e) = r2_client.delete_image(&url).await {
+            error!("Failed to delete image {} from S3: {}", url, e);
+            // We'll still delete it from the DB to not retry endlessly, or we could leave it
+            // Let's delete it from DB anyway so it stops being tracked
+        }
+        
+        sqlx::query("DELETE FROM uploaded_images WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+            
+        count += 1;
+    }
+    
+    Ok(count)
 }

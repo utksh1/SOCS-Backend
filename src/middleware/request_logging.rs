@@ -1,9 +1,9 @@
 use axum::{
-    extract::Request,
+    extract::{connect_info::ConnectInfo, Request},
     middleware::Next,
     response::Response,
 };
-use std::time::Instant;
+use std::{net::SocketAddr, time::Instant};
 
 /// Middleware to log all incoming HTTP requests with timing information
 pub async fn log_request(
@@ -11,28 +11,20 @@ pub async fn log_request(
     next: Next,
 ) -> Response {
     let method = request.method().clone();
-    let uri = request.uri().clone();
-    let path = uri.path().to_string();
-    let query = uri.query().map(|q| q.to_string());
+    // Deliberately log only the path. Verification/reset tokens live in query
+    // parameters and must never be copied into application logs.
+    let path = request.uri().path().to_string();
     let start = Instant::now();
     
     // Extract client IP if available (done before moving request)
     let client_ip = request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|h| h.to_str().ok())
-        .or_else(|| {
-            request
-                .headers()
-                .get("x-real-ip")
-                .and_then(|h| h.to_str().ok())
-        })
-        .map(|s| s.to_string());
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(address)| address.ip().to_string());
     
     tracing::debug!(
         method = %method,
         path = %path,
-        query = ?query,
         client_ip = ?client_ip,
         "Incoming request"
     );

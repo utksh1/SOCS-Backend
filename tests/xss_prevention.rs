@@ -1,19 +1,21 @@
-// Integration tests for XSS prevention
-// Run with: cargo test --test xss_prevention
+use socs_backend::utils::sanitize::{sanitize_html, sanitize_url};
 
-// Import from the binary crate - we need to add library support first
-// For now, these tests will be in the main module
+#[test]
+fn rich_text_removes_scripts_handlers_and_unsafe_links() {
+    let sanitized = sanitize_html(
+        r#"<p onclick="alert(1)">Hello</p><script>alert(1)</script><a href="javascript:alert(1)">bad</a>"#,
+    );
 
-#[cfg(test)]
-mod tests {
-    // These tests verify XSS prevention works correctly
-    // Since we can't import from the binary directly, we'll reference the unit tests
-    // The actual XSS prevention tests are in src/utils/sanitize.rs
-    
-    #[test]
-    fn integration_tests_placeholder() {
-        // The comprehensive XSS tests are located in src/utils/sanitize.rs
-        // Run them with: cargo test sanitize
-        assert!(true);
-    }
+    assert!(sanitized.contains("<p>Hello</p>"));
+    assert!(!sanitized.contains("<script"));
+    assert!(!sanitized.contains("onclick"));
+    assert!(!sanitized.contains("javascript:"));
+}
+
+#[test]
+fn stored_url_fields_only_accept_http_schemes() {
+    assert_eq!(sanitize_url("https://example.com/image.png"), Some("https://example.com/image.png".to_string()));
+    assert_eq!(sanitize_url("javascript:alert(1)"), None);
+    assert_eq!(sanitize_url("data:text/html,boom"), None);
+    assert_eq!(sanitize_url("/relative/path"), None);
 }

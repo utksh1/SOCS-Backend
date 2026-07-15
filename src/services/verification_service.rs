@@ -1,6 +1,7 @@
 use bcrypt::{hash, DEFAULT_COST};
 use chrono::{Duration, Utc};
 use rand::{thread_rng, Rng};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 use crate::{
@@ -19,10 +20,14 @@ pub fn generate_secure_token() -> String {
     hex::encode(token_bytes)
 }
 
-/// Hash a token using bcrypt with cost factor 12
+/// Produce a deterministic lookup fingerprint for a high-entropy token.
+///
+/// The token itself is 256 bits of randomness, so a SHA-256 fingerprint is
+/// safe to store and allows an indexed equality lookup. Bcrypt is unsuitable
+/// here because its random salt produces a different value on every call.
 #[tracing::instrument(name = "hash_token", skip(token))]
-pub fn hash_token(token: &str) -> Result<String, bcrypt::BcryptError> {
-    hash(token, DEFAULT_COST)
+pub fn hash_token(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
 }
 
 /// Send verification email with rate limiting
@@ -59,19 +64,11 @@ pub async fn send_verification_email(
 
     // Generate secure token
     let token = generate_secure_token();
-    let token_hash = hash_token(&token)?;
-
-    // Delete any existing verification tokens for this user
-    verification_token_repository::delete_user_tokens(
-        pool,
-        user.id,
-        TokenType::EmailVerification,
-    )
-    .await?;
+    let token_hash = hash_token(&token);
 
     // Create new token with 30-minute expiration
     let expires_at = Utc::now() + Duration::minutes(30);
-    verification_token_repository::create(
+    let stored_token = verification_token_repository::create(
         pool,
         user.id,
         &token_hash,
@@ -81,20 +78,41 @@ pub async fn send_verification_email(
     .await?;
 
     // Generate verification link
-    let verification_link = format!("{}/verify-email?token={}", config.frontend_url, token);
+    let verification_link = format!(
+        "{}/verify-email?token={}",
+        config.frontend_url.trim_end_matches('/'),
+        token
+    );
 
-    // Send email
-    email_service
+    // Do not invalidate an older usable link until the replacement email has
+    // been handed to SMTP. If delivery fails, remove only the new orphaned
+    // token so the existing link remains usable.
+    let delivery_error = email_service
         .send_verification_email(&user.email, &user.name, &verification_link)
         .await
-        .map_err(|e| {
-            tracing::error!(
-                error = %e,
-                user_email = %user.email,
-                "Failed to send verification email"
-            );
-            ApiError::InternalServerError
-        })?;
+        .err()
+        .map(|error| error.to_string());
+    if let Some(error) = delivery_error {
+        if let Err(cleanup_error) = sqlx::query("DELETE FROM verification_tokens WHERE id = $1")
+            .bind(stored_token.id)
+            .execute(pool)
+            .await
+        {
+            tracing::error!(%cleanup_error, token_id = %stored_token.id, "Failed to remove undelivered verification token");
+        }
+        tracing::error!(%error, user_email = %user.email, "Failed to send verification email");
+        return Err(ApiError::ServiceUnavailable(
+            "Email delivery is temporarily unavailable".to_string(),
+        ));
+    }
+
+    verification_token_repository::delete_other_user_tokens(
+        pool,
+        user.id,
+        TokenType::EmailVerification,
+        stored_token.id,
+    )
+    .await?;
 
     tracing::info!(
         user_id = %user.id,
@@ -112,7 +130,7 @@ pub async fn verify_email_token(
     token_string: &str,
 ) -> Result<User, ApiError> {
     // Hash the provided token to compare with database
-    let token_hash = hash_token(token_string)?;
+    let token_hash = hash_token(token_string);
 
     // Find token by hash
     let stored_token = verification_token_repository::find_by_hash(pool, &token_hash)
@@ -152,11 +170,30 @@ pub async fn verify_email_token(
         return Err(ApiError::BadRequest("Invalid token".to_string()));
     }
 
-    // Mark token as used
-    verification_token_repository::mark_as_used(pool, stored_token.id).await?;
+    // Claiming the token and updating the account must be one transaction. If
+    // the account update fails, the token remains usable rather than being
+    // consumed without completing verification.
+    let mut transaction = pool.begin().await?;
+    let claim = sqlx::query(
+        "UPDATE verification_tokens SET used_at = NOW() WHERE id = $1 AND used_at IS NULL AND expires_at > NOW()",
+    )
+    .bind(stored_token.id)
+    .execute(&mut *transaction)
+    .await?;
+    if claim.rows_affected() == 0 {
+        return Err(ApiError::BadRequest(
+            "Invalid or expired verification token".to_string(),
+        ));
+    }
 
-    // Mark user's email as verified
-    let user = user_repository::mark_email_verified(pool, stored_token.user_id).await?;
+    let user = sqlx::query_as::<_, User>(
+        "UPDATE users SET email_verified_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *",
+    )
+    .bind(stored_token.user_id)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("User not found".to_string()))?;
+    transaction.commit().await?;
 
     tracing::info!(
         user_id = %user.id,
@@ -180,10 +217,12 @@ pub async fn send_password_reset_email(
     email_service: &EmailService,
     email: &str,
 ) -> Result<(), ApiError> {
+    let email = crate::utils::sanitize::normalize_email(email);
+
     // Check rate limit: 3 requests per hour
     if !rate_limit_repository::check_and_increment(
         pool,
-        email,
+        &email,
         TokenType::PasswordReset,
         3,
         1,
@@ -200,7 +239,7 @@ pub async fn send_password_reset_email(
     }
 
     // Find user by email (return success even if not found to prevent enumeration)
-    let user = match user_repository::find_by_email(pool, email).await? {
+    let user = match user_repository::find_by_email(pool, &email).await? {
         Some(user) => user,
         None => {
             tracing::info!(
@@ -214,19 +253,11 @@ pub async fn send_password_reset_email(
 
     // Generate secure token
     let token = generate_secure_token();
-    let token_hash = hash_token(&token)?;
-
-    // Delete any existing password reset tokens for this user
-    verification_token_repository::delete_user_tokens(
-        pool,
-        user.id,
-        TokenType::PasswordReset,
-    )
-    .await?;
+    let token_hash = hash_token(&token);
 
     // Create new token with 30-minute expiration
     let expires_at = Utc::now() + Duration::minutes(30);
-    verification_token_repository::create(
+    let stored_token = verification_token_repository::create(
         pool,
         user.id,
         &token_hash,
@@ -236,20 +267,38 @@ pub async fn send_password_reset_email(
     .await?;
 
     // Generate reset link
-    let reset_link = format!("{}/reset-password?token={}", config.frontend_url, token);
+    let reset_link = format!(
+        "{}/reset-password?token={}",
+        config.frontend_url.trim_end_matches('/'),
+        token
+    );
 
-    // Send email
-    email_service
+    let delivery_error = email_service
         .send_password_reset_email(&user.email, &user.name, &reset_link)
         .await
-        .map_err(|e| {
-            tracing::error!(
-                error = %e,
-                user_email = %user.email,
-                "Failed to send password reset email"
-            );
-            ApiError::InternalServerError
-        })?;
+        .err()
+        .map(|error| error.to_string());
+    if let Some(error) = delivery_error {
+        if let Err(cleanup_error) = sqlx::query("DELETE FROM verification_tokens WHERE id = $1")
+            .bind(stored_token.id)
+            .execute(pool)
+            .await
+        {
+            tracing::error!(%cleanup_error, token_id = %stored_token.id, "Failed to remove undelivered password-reset token");
+        }
+        tracing::error!(%error, user_email = %user.email, "Failed to send password reset email");
+        return Err(ApiError::ServiceUnavailable(
+            "Email delivery is temporarily unavailable".to_string(),
+        ));
+    }
+
+    verification_token_repository::delete_other_user_tokens(
+        pool,
+        user.id,
+        TokenType::PasswordReset,
+        stored_token.id,
+    )
+    .await?;
 
     tracing::info!(
         user_id = %user.id,
@@ -279,7 +328,7 @@ pub async fn reset_password_with_token(
     }
 
     // Hash the provided token to compare with database
-    let token_hash = hash_token(token_string)?;
+    let token_hash = hash_token(token_string);
 
     // Find token by hash
     let stored_token = verification_token_repository::find_by_hash(pool, &token_hash)
@@ -319,14 +368,48 @@ pub async fn reset_password_with_token(
         return Err(ApiError::BadRequest("Invalid token".to_string()));
     }
 
-    // Hash the new password
-    let password_hash = hash(new_password, DEFAULT_COST)?;
+    // Hash the new password in a blocking task
+    let new_password_clone = new_password.to_string();
+    let password_hash = tokio::task::spawn_blocking(move || {
+        hash(&new_password_clone, DEFAULT_COST)
+    })
+    .await
+    .map_err(|_| ApiError::InternalServerError)?
+    .map_err(|_| ApiError::InternalServerError)?;
 
-    // Mark token as used
-    verification_token_repository::mark_as_used(pool, stored_token.id).await?;
+    // Consume the token and update the password atomically. A database failure
+    // must not invalidate the only reset link without changing the password.
+    let mut transaction = pool.begin().await?;
+    let claim = sqlx::query(
+        "UPDATE verification_tokens SET used_at = NOW() WHERE id = $1 AND used_at IS NULL AND expires_at > NOW()",
+    )
+    .bind(stored_token.id)
+    .execute(&mut *transaction)
+    .await?;
+    if claim.rows_affected() == 0 {
+        return Err(ApiError::BadRequest(
+            "Invalid or expired password reset token".to_string(),
+        ));
+    }
 
-    // Update user's password
-    let user = user_repository::update_password(pool, stored_token.user_id, &password_hash).await?;
+    let user = sqlx::query_as::<_, User>(
+        "UPDATE users SET password = $1, token_version = token_version + 1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL RETURNING *",
+    )
+    .bind(&password_hash)
+    .bind(stored_token.user_id)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("User not found".to_string()))?;
+
+    // A successful reset invalidates every remaining reset link, including
+    // links that may have been generated concurrently.
+    sqlx::query(
+        "DELETE FROM verification_tokens WHERE user_id = $1 AND token_type = 'password_reset'",
+    )
+    .bind(stored_token.user_id)
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
 
     // Send confirmation email
     if let Err(e) = email_service
@@ -367,4 +450,19 @@ pub async fn cleanup_expired_data(pool: &PgPool) -> Result<(), ApiError> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{generate_secure_token, hash_token};
+
+    #[test]
+    fn token_fingerprint_is_stable_and_does_not_reveal_the_token() {
+        let token = generate_secure_token();
+        let fingerprint = hash_token(&token);
+
+        assert_eq!(fingerprint, hash_token(&token));
+        assert_ne!(fingerprint, token);
+        assert_eq!(fingerprint.len(), 64);
+    }
 }

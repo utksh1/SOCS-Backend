@@ -47,6 +47,34 @@ pub async fn update(
     tags: Option<&[String]>,
     featured: Option<bool>,
 ) -> Result<Project, sqlx::Error> {
+    update_with_approval_reset(
+        pool,
+        id,
+        slug,
+        title,
+        description,
+        tech_stack,
+        github_link,
+        tags,
+        featured,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_with_approval_reset(
+    pool: &PgPool,
+    id: Uuid,
+    slug: Option<&str>,
+    title: Option<&str>,
+    description: Option<&str>,
+    tech_stack: Option<&[String]>,
+    github_link: Option<Option<&str>>,
+    tags: Option<&[String]>,
+    featured: Option<bool>,
+    reset_approval: bool,
+) -> Result<Project, sqlx::Error> {
     use sqlx::QueryBuilder;
     
     let mut builder = QueryBuilder::new("UPDATE projects SET updated_at = NOW()");
@@ -80,8 +108,12 @@ pub async fn update(
         builder.push(", featured = ").push_bind(f);
         _has_updates = true;
     }
+
+    if reset_approval {
+        builder.push(", status = 'pending'::content_status, approved_by = NULL, approved_at = NULL");
+    }
     
-    builder.push(" WHERE id = ").push_bind(id);
+    builder.push(" WHERE id = ").push_bind(id).push(" AND deleted_at IS NULL");
     builder.push(" RETURNING *");
     
     let project = builder.build_query_as::<Project>()
@@ -109,7 +141,7 @@ pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
 
 pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
-        "UPDATE projects SET deleted_at = NULL WHERE id = $1"
+        "UPDATE projects SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL"
     )
     .bind(id)
     .execute(pool)
@@ -119,7 +151,7 @@ pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
 }
 
 pub async fn permanent_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM projects WHERE id = $1")
+    let result = sqlx::query("DELETE FROM projects WHERE id = $1 AND deleted_at IS NOT NULL")
         .bind(id)
         .execute(pool)
         .await?;

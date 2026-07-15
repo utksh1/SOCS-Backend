@@ -9,6 +9,7 @@ use crate::models::user::UserRole;
 pub struct Claims {
     pub sub: String, // user_id
     pub role: UserRole,
+    pub token_version: i32,
     pub exp: i64,
     pub iat: i64,
 }
@@ -16,6 +17,7 @@ pub struct Claims {
 pub fn create_token(
     user_id: Uuid,
     role: UserRole,
+    token_version: i32,
     secret: &str,
     expires_in_seconds: i64,
 ) -> Result<String, jsonwebtoken::errors::Error> {
@@ -25,6 +27,7 @@ pub fn create_token(
     let claims = Claims {
         sub: user_id.to_string(),
         role,
+        token_version,
         exp,
         iat: now.timestamp(),
     };

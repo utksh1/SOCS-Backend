@@ -3,7 +3,8 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::json;
+
+use crate::dto::response_dto::ApiErrorResponse;
 
 pub type Result<T> = std::result::Result<T, ApiError>;
 
@@ -19,6 +20,7 @@ pub enum ApiError {
     RateLimitExceeded { retry_after: u64 },
     TooManyRequests(String),
     Gone(String),
+    ServiceUnavailable(String),
 }
 
 impl IntoResponse for ApiError {
@@ -27,11 +29,10 @@ impl IntoResponse for ApiError {
             ApiError::RateLimitExceeded { retry_after } => {
                 let mut response = (
                     StatusCode::TOO_MANY_REQUESTS,
-                    Json(json!({
-                        "success": false,
-                        "message": format!("Rate limit exceeded. Please try again in {} seconds.", retry_after),
-                        "retry_after": retry_after,
-                    })),
+                    Json(ApiErrorResponse::with_retry_after(
+                        format!("Rate limit exceeded. Please try again in {} seconds.", retry_after),
+                        retry_after
+                    )),
                 ).into_response();
                 
                 response.headers_mut().insert(
@@ -51,6 +52,7 @@ impl IntoResponse for ApiError {
                     ApiError::ValidationError(msg) => (StatusCode::BAD_REQUEST, msg),
                     ApiError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
                     ApiError::Gone(msg) => (StatusCode::GONE, msg),
+                    ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
                     ApiError::InternalServerError => {
                         (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
                     }
@@ -59,10 +61,7 @@ impl IntoResponse for ApiError {
                 
                 (
                     status,
-                    Json(json!({
-                        "success": false,
-                        "message": message,
-                    })),
+                    Json(ApiErrorResponse::new(message)),
                 )
                     .into_response()
             }
@@ -72,6 +71,29 @@ impl IntoResponse for ApiError {
 
 impl From<sqlx::Error> for ApiError {
     fn from(err: sqlx::Error) -> Self {
+        if matches!(err, sqlx::Error::RowNotFound) {
+            return ApiError::NotFound("Record not found".to_string());
+        }
+
+        if err
+            .as_database_error()
+            .and_then(|database_error| database_error.code())
+            .is_some_and(|code| code == "23505")
+        {
+            tracing::warn!("Database unique-constraint violation: {:?}", err);
+            return ApiError::Conflict("A record with that value already exists".to_string());
+        }
+
+        if err
+            .as_database_error()
+            .and_then(|database_error| database_error.code())
+            .is_some_and(|code| code == "23503")
+        {
+            tracing::warn!("Database foreign-key violation: {:?}", err);
+            return ApiError::Conflict("The record still has related data".to_string());
+        }
+
+        println!("SQLX DB ERROR: {:?}", err);
         tracing::error!("Database error: {:?}", err);
         ApiError::InternalServerError
     }

@@ -1,6 +1,5 @@
 use axum::{
     extract::Request,
-    http::StatusCode,
     middleware::Next,
     response::Response,
     Extension,

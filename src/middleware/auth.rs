@@ -39,6 +39,12 @@ pub async fn auth_middleware(
     
     let user = auth_service::get_user_by_id(&state.db, user_id).await?;
     
+    // Check if token_version matches to handle token invalidation (e.g. password change)
+    println!("claims: {}, user: {}", claims.token_version, user.token_version);
+    if claims.token_version != user.token_version {
+        return Err(ApiError::Unauthorized("Token has been revoked".to_string()));
+    }
+    
     // Insert user into request extensions
     request.extensions_mut().insert(user);
     
@@ -62,9 +68,12 @@ pub async fn optional_auth_middleware(
             if let Ok(claims) = jwt::verify_token(token, &state.config.jwt_secret) {
                 if let Ok(user_id) = Uuid::parse_str(&claims.sub) {
                     if let Ok(user) = auth_service::get_user_by_id(&state.db, user_id).await {
-                        // Insert Some(user) into extensions
-                        request.extensions_mut().insert(Some(user));
-                        return next.run(request).await;
+                        // Check if token_version matches to handle token invalidation
+                        if claims.token_version == user.token_version {
+                            // Insert Some(user) into extensions
+                            request.extensions_mut().insert(Some(user));
+                            return next.run(request).await;
+                        }
                     }
                 }
             }
@@ -102,6 +111,12 @@ pub async fn require_toplead(
         .map_err(|_| ApiError::Unauthorized("Invalid user ID".to_string()))?;
     
     let user = auth_service::get_user_by_id(&state.db, user_id).await?;
+    
+    // Check if token_version matches to handle token invalidation
+    println!("claims: {}, user: {}", claims.token_version, user.token_version);
+    if claims.token_version != user.token_version {
+        return Err(ApiError::Unauthorized("Token has been revoked".to_string()));
+    }
     
     // Check if user has TopLead role
     if !user.has_role(&UserRole::TopLead) {
@@ -141,9 +156,9 @@ pub fn can_assign_roles(actor: &SafeUser, roles: &[UserRole]) -> Result<(), ApiE
     let actor_level = actor.role_level();
     
     for role in roles {
-        if role.level() > actor_level {
+        if role.level() >= actor_level {
             return Err(ApiError::Forbidden(
-                format!("You cannot assign {:?} role (insufficient level)", role)
+                format!("You cannot assign {:?} role (roles must be below your level)", role)
             ));
         }
     }
@@ -170,4 +185,3 @@ pub fn can_approve_content(user: &SafeUser) -> Result<(), ApiError> {
     }
     Ok(())
 }
-

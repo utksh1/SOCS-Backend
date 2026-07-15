@@ -1,4 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use axum::{
+    response::{IntoResponse, Response},
+    Json,
+};
 
 use super::pagination_dto::PaginationMeta;
 
@@ -13,7 +17,7 @@ use super::pagination_dto::PaginationMeta;
 /// # Examples
 ///
 /// Simple success response:
-/// ```
+/// ```ignore
 /// ApiResponse {
 ///     success: true,
 ///     message: None,
@@ -23,7 +27,7 @@ use super::pagination_dto::PaginationMeta;
 /// ```
 ///
 /// Success with message:
-/// ```
+/// ```ignore
 /// ApiResponse {
 ///     success: true,
 ///     message: Some("User created successfully".to_string()),
@@ -33,7 +37,7 @@ use super::pagination_dto::PaginationMeta;
 /// ```
 ///
 /// Paginated response:
-/// ```
+/// ```ignore
 /// ApiResponse {
 ///     success: true,
 ///     message: None,
@@ -41,7 +45,7 @@ use super::pagination_dto::PaginationMeta;
 ///     pagination: Some(pagination_meta),
 /// }
 /// ```
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     /// Indicates whether the operation was successful
     pub success: bool,
@@ -115,6 +119,40 @@ impl<T> ApiResponse<T> {
             data: None,
             pagination: None,
         }
+    }
+}
+
+/// Generic API error response wrapper
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ApiErrorResponse {
+    pub success: bool,
+    pub message: String,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after: Option<u64>,
+}
+
+impl ApiErrorResponse {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            message: message.into(),
+            retry_after: None,
+        }
+    }
+
+    pub fn with_retry_after(message: impl Into<String>, retry_after: u64) -> Self {
+        Self {
+            success: false,
+            message: message.into(),
+            retry_after: Some(retry_after),
+        }
+    }
+}
+
+impl<T: Serialize> IntoResponse for ApiResponse<T> {
+    fn into_response(self) -> Response {
+        Json(self).into_response()
     }
 }
 

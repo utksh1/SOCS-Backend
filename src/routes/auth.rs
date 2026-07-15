@@ -158,20 +158,31 @@ pub async fn change_password(
         .await?
         .ok_or_else(|| crate::error::ApiError::NotFound("User not found".to_string()))?;
     
-    // Verify current password
-    let valid = bcrypt::verify(&payload.current_password, &db_user.password)
-        .map_err(|_| crate::error::ApiError::InternalServerError)?;
+    // Verify current password in a blocking task
+    let current_password_clone = payload.current_password.clone();
+    let db_password_clone = db_user.password.clone();
+    let valid = tokio::task::spawn_blocking(move || {
+        bcrypt::verify(&current_password_clone, &db_password_clone)
+    })
+    .await
+    .map_err(|_| crate::error::ApiError::InternalServerError)?
+    .map_err(|_| crate::error::ApiError::InternalServerError)?;
     
     if !valid {
         return Err(crate::error::ApiError::Unauthorized("Current password is incorrect".to_string()));
     }
     
-    // Hash new password
-    let new_password_hash = bcrypt::hash(&payload.new_password, bcrypt::DEFAULT_COST)
-        .map_err(|_| crate::error::ApiError::InternalServerError)?;
+    // Hash new password in a blocking task
+    let new_password_clone = payload.new_password.clone();
+    let new_password_hash = tokio::task::spawn_blocking(move || {
+        bcrypt::hash(&new_password_clone, bcrypt::DEFAULT_COST)
+    })
+    .await
+    .map_err(|_| crate::error::ApiError::InternalServerError)?
+    .map_err(|_| crate::error::ApiError::InternalServerError)?;
     
-    // Update password in database
-    sqlx::query("UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2")
+    // Update password and increment token_version in database to invalidate existing tokens
+    sqlx::query("UPDATE users SET password = $1, token_version = token_version + 1, updated_at = NOW() WHERE id = $2")
         .bind(&new_password_hash)
         .bind(user.id)
         .execute(&state.db)

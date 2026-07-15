@@ -51,6 +51,7 @@ pub struct CreateEventTimelineDto {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct UpdateEventTimelineDto {
+    #[validate(length(min = 1, max = 10))]
     pub time: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,

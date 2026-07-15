@@ -134,6 +134,11 @@ DATABASE_URL=postgresql://localhost:5432/socs
 # REDIS (Rate Limiting)
 # ============================================
 REDIS_URL=redis://localhost:6379
+# Keep true in every deployed environment. Set false only for hermetic tests.
+RATE_LIMIT_ENABLED=true
+# Set true only when requests arrive through a trusted reverse proxy that
+# supplies X-Forwarded-For (Render does).
+TRUST_PROXY_HEADERS=false
 
 # ============================================
 # JWT AUTHENTICATION
@@ -147,20 +152,23 @@ JWT_EXPIRES_IN=86400
 HOST=127.0.0.1
 PORT=5001
 CORS_ORIGIN=http://localhost:3000
+FRONTEND_URL=http://localhost:3000
 
 # ============================================
 # CLOUDFLARE R2 (File Uploads)
 # ============================================
-CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
-CLOUDFLARE_R2_ACCESS_KEY_ID=your-r2-access-key
-CLOUDFLARE_R2_SECRET_ACCESS_KEY=your-r2-secret-key
-CLOUDFLARE_R2_BUCKET_NAME=socs-uploads
+R2_ACCOUNT_ID=your-cloudflare-account-id
+R2_ACCESS_KEY_ID=your-r2-access-key
+R2_SECRET_ACCESS_KEY=your-r2-secret-key
+R2_BUCKET_NAME=socs-uploads
+R2_PUBLIC_URL=https://images.example.com
 
 # ============================================
 # EMAIL (Gmail SMTP)
 # ============================================
 SMTP_USERNAME=your-email@gmail.com
 SMTP_PASSWORD=your-gmail-app-password
+FROM_EMAIL=your-email@gmail.com
 ```
 
 ### Cloudflare R2 Setup
@@ -210,12 +218,12 @@ sqlx migrate revert
 psql socs
 
 -- Insert TopLead user (password: admin123)
-INSERT INTO users (name, email, password, role)
+INSERT INTO users (name, email, password, roles)
 VALUES (
   'Admin User',
   'admin@socs.edu',
   '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIeWU7u3MO',
-  'TOPLEAD'
+  ARRAY['TOPLEAD', 'MEMBER']::user_role[]
 );
 ```
 
@@ -815,6 +823,16 @@ sqlx migrate run
 sqlx migrate run --ignore-missing
 ```
 
+If this repository's older `20260723` alias rows are already present in an
+existing database, back it up and repair only the SQLx history before running
+new migrations:
+
+```bash
+set -a; source .env; set +a
+./scripts/repair_sqlx_migration_history.sh --apply
+sqlx migrate run
+```
+
 ### Compilation Errors
 
 ```bash
@@ -900,3 +918,17 @@ MIT License - see LICENSE file for details
 **Built with 🦀 Rust for the SOCS cybersecurity community**
 
 *Platform Status: ✅ Production Ready | API Endpoints: 120+ | Database Tables: 23+ | Role System: 5-Tier | Approval Workflow: ✅*
+
+## Testing
+
+To run the tests locally, ensure you have a running PostgreSQL and Redis instance (Redis MUST be running on port 6379), then run:
+
+```bash
+./scripts/test.sh
+```
+
+To generate a coverage report (requires `cargo-tarpaulin`):
+
+```bash
+./scripts/coverage.sh
+```

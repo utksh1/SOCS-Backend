@@ -45,33 +45,36 @@ pub async fn soft_delete_event(pool: &PgPool, id: Uuid) -> Result<(), ApiError> 
 
 pub async fn restore_event(pool: &PgPool, id: Uuid) -> Result<(), ApiError> {
     let mut tx = pool.begin().await?;
-    
-    // Restore the event
-    let result = sqlx::query(
-        "UPDATE events SET deleted_at = NULL WHERE id = $1"
+
+    let deleted_at = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+        "SELECT deleted_at FROM events WHERE id = $1 AND deleted_at IS NOT NULL FOR UPDATE",
     )
     .bind(id)
-    .execute(&mut *tx)
-    .await?;
-    
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound("Event not found".into()));
-    }
-    
-    // Restore cascaded records
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("Event not found or not deleted".into()))?;
+
+    // Only restore records that were deleted as part of this parent cascade.
     sqlx::query(
-        "UPDATE event_timeline_items SET deleted_at = NULL WHERE event_id = $1"
+        "UPDATE event_timeline_items SET deleted_at = NULL WHERE event_id = $1 AND deleted_at = $2"
     )
     .bind(id)
+    .bind(deleted_at)
     .execute(&mut *tx)
     .await?;
     
     sqlx::query(
-        "UPDATE event_prerequisites SET deleted_at = NULL WHERE event_id = $1"
+        "UPDATE event_prerequisites SET deleted_at = NULL WHERE event_id = $1 AND deleted_at = $2"
     )
     .bind(id)
+    .bind(deleted_at)
     .execute(&mut *tx)
     .await?;
+
+    sqlx::query("UPDATE events SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     
     tx.commit().await?;
     
@@ -93,13 +96,15 @@ pub async fn permanent_delete_event(pool: &PgPool, id: Uuid) -> Result<(), ApiEr
         .await?;
     
     // Permanently delete the event
-    let result = sqlx::query("DELETE FROM events WHERE id = $1")
+    let result = sqlx::query("DELETE FROM events WHERE id = $1 AND deleted_at IS NOT NULL")
         .bind(id)
         .execute(&mut *tx)
         .await?;
     
     if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound("Event not found".into()));
+        return Err(ApiError::Conflict(
+            "Event must be soft-deleted before it can be permanently removed".into(),
+        ));
     }
     
     tx.commit().await?;

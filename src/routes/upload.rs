@@ -1,3 +1,4 @@
+use std::env;
 use axum::{
     extract::{Multipart, State},
     http::StatusCode,
@@ -7,6 +8,8 @@ use axum::{
 use axum::body::Bytes;
 use serde_json::json;
 use validator::Validate;
+use std::io::Cursor;
+use image::ImageFormat;
 
 use crate::{
     dto::upload_dto::DeleteImageDto,
@@ -26,16 +29,6 @@ async fn extract_validated_image(multipart: &mut Multipart) -> Result<(Bytes, St
         .map_err(|_| ApiError::BadRequest("Invalid multipart data".to_string()))? {
         
         if field.name().unwrap_or("") == "image" {
-            let content_type = field.content_type()
-                .ok_or_else(|| ApiError::BadRequest("Missing content type".to_string()))?
-                .to_string();
-            
-            if !ALLOWED_TYPES.contains(&content_type.as_str()) {
-                return Err(ApiError::BadRequest(
-                    "Only image files (JPEG, PNG, GIF, WebP) are allowed".to_string()
-                ));
-            }
-            
             let data = field.bytes().await
                 .map_err(|_| ApiError::BadRequest("Failed to read file data".to_string()))?;
             
@@ -43,7 +36,49 @@ async fn extract_validated_image(multipart: &mut Multipart) -> Result<(Bytes, St
                 return Err(ApiError::BadRequest("File size exceeds 5MB limit".to_string()));
             }
             
-            return Ok((data, content_type));
+            // Magic byte detection
+            let detected_type = infer::get(&data)
+                .ok_or_else(|| ApiError::BadRequest("Could not determine file type".to_string()))?;
+                
+            let content_type = detected_type.mime_type();
+            
+            if !ALLOWED_TYPES.contains(&content_type) {
+                return Err(ApiError::BadRequest(
+                    "Only image files (JPEG, PNG, GIF, WebP) are allowed".to_string()
+                ));
+            }
+            
+            // Decode and re-encode image to strip EXIF data and neutralize polyglots
+            let img = tokio::task::spawn_blocking(move || {
+                image::load_from_memory(&data)
+            })
+            .await
+            .map_err(|_| ApiError::InternalServerError)?
+            .map_err(|e| {
+                tracing::warn!("Failed to decode image: {:?}", e);
+                ApiError::BadRequest("Invalid or corrupted image data".to_string())
+            })?;
+            
+            let format = match content_type {
+                "image/jpeg" => image::ImageFormat::Jpeg,
+                "image/png" => image::ImageFormat::Png,
+                "image/gif" => image::ImageFormat::Gif,
+                "image/webp" => image::ImageFormat::WebP,
+                _ => image::ImageFormat::Jpeg,
+            };
+            
+            let safe_data = tokio::task::spawn_blocking(move || {
+                let mut buffer = std::io::Cursor::new(Vec::new());
+                img.write_to(&mut buffer, format).map(|_| buffer.into_inner())
+            })
+            .await
+            .map_err(|_| ApiError::InternalServerError)?
+            .map_err(|e| {
+                tracing::error!("Failed to re-encode image: {:?}", e);
+                ApiError::InternalServerError
+            })?;
+            
+            return Ok((axum::body::Bytes::from(safe_data), content_type.to_string()));
         }
     }
     
@@ -57,7 +92,7 @@ pub async fn upload_image(
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     let (data, content_type) = extract_validated_image(&mut multipart).await?;
     
-    let r2_client = R2Client::new();
+    let r2_client = R2Client::new()?;
     let url = r2_client.upload_image(data.to_vec(), &content_type, "images")
         .await
         .map_err(|_| ApiError::InternalServerError)?;
@@ -79,7 +114,7 @@ pub async fn upload_profile_picture(
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     let (data, content_type) = extract_validated_image(&mut multipart).await?;
     
-    let r2_client = R2Client::new();
+    let r2_client = R2Client::new()?;
     let url = r2_client.upload_image(data.to_vec(), &content_type, "profiles")
         .await
         .map_err(|_| ApiError::InternalServerError)?;
@@ -97,20 +132,33 @@ pub async fn upload_profile_picture(
 }
 
 pub async fn delete_image(
-    State(_state): State<AppState>,
-    Extension(_user): Extension<SafeUser>,
+    State(state): State<AppState>,
+    Extension(user): Extension<SafeUser>,
     Json(payload): Json<DeleteImageDto>,
-) -> Result<Json<serde_json::Value>> {
-    payload.validate()
-        .map_err(|e| ApiError::ValidationError(e.to_string()))?;
+) -> Result<impl axum::response::IntoResponse> {
+    payload.validate()?;
     
-    let r2_client = R2Client::new();
-    r2_client.delete_image(&payload.url)
-        .await
-        .map_err(|_| ApiError::InternalServerError)?;
+    if !payload.url.contains(&env::var("R2_PUBLIC_URL").unwrap_or_default()) {
+        return Err(ApiError::BadRequest("Invalid image URL".to_string()));
+    }
     
-    Ok(Json(json!({
-        "success": true,
-        "message": "Image deleted successfully"
-    })))
+    let current_user = user_repository::find_by_id(&state.db, user.id).await?
+        .ok_or_else(|| ApiError::NotFound("User not found".to_string()))?;
+        
+    if current_user.profile_picture.as_deref() != Some(&payload.url) && current_user.avatar_url.as_deref() != Some(&payload.url) {
+        return Err(ApiError::Forbidden("You can only delete your own profile picture".to_string()));
+    }
+    
+    user_repository::clear_profile_picture(&state.db, user.id, &payload.url).await?;
+    
+    let r2_client = R2Client::new()?;
+    if let Err(e) = r2_client.delete_image(&payload.url).await {
+        tracing::warn!("Failed to delete image from R2, but DB reference was cleared: {}", e);
+    }
+    
+    Ok(crate::dto::response_dto::ApiResponse::success_with_message("Profile picture deleted successfully", json!({})))
+}
+
+pub fn upload_body_limit() -> axum::extract::DefaultBodyLimit {
+    axum::extract::DefaultBodyLimit::max(5 * 1024 * 1024)
 }

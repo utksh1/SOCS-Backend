@@ -1,54 +1,21 @@
-use jsonwebtoken::{encode, EncodingKey, Header};
-use serde::{Deserialize, Serialize};
+use socs_backend::{models::user::UserRole, utils::jwt::create_token};
 use uuid::Uuid;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    pub sub: String,
-    pub exp: usize,
-}
 
 pub struct AuthFixture;
 
 impl AuthFixture {
     /// Generate JWT token for a user ID
     pub fn generate_token(user_id: Uuid, secret: &str) -> String {
-        let expiration = chrono::Utc::now()
-            .checked_add_signed(chrono::Duration::hours(1))
-            .unwrap()
-            .timestamp() as usize;
-        
-        let claims = Claims {
-            sub: user_id.to_string(),
-            exp: expiration,
-        };
-        
-        encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(secret.as_bytes()),
-        )
-        .unwrap()
+        Self::generate_token_with_role(user_id, UserRole::Member, secret)
+    }
+
+    pub fn generate_token_with_role(user_id: Uuid, role: UserRole, secret: &str) -> String {
+        create_token(user_id, role, 0, secret, 3600).unwrap()
     }
     
     /// Generate expired token for testing
     pub fn generate_expired_token(user_id: Uuid, secret: &str) -> String {
-        let expiration = chrono::Utc::now()
-            .checked_sub_signed(chrono::Duration::hours(1))
-            .unwrap()
-            .timestamp() as usize;
-        
-        let claims = Claims {
-            sub: user_id.to_string(),
-            exp: expiration,
-        };
-        
-        encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(secret.as_bytes()),
-        )
-        .unwrap()
+        create_token(user_id, UserRole::Member, 0, secret, -3600).unwrap()
     }
     
     /// Generate token with invalid signature

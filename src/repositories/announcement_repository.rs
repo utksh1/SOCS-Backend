@@ -39,6 +39,28 @@ pub async fn find_all(pool: &PgPool) -> Result<Vec<Announcement>, sqlx::Error> {
     .await
 }
 
+pub async fn find_all_paginated(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<Announcement>, sqlx::Error> {
+    sqlx::query_as::<_, Announcement>(
+        r#"
+        SELECT id, title, content, category, pinned, author_id, created_at, updated_at, deleted_at
+        FROM announcements
+        WHERE deleted_at IS NULL
+        ORDER BY pinned DESC, created_at DESC
+        LIMIT $1 OFFSET $2
+        "#
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn count_all(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT COUNT(*) FROM announcements WHERE deleted_at IS NULL")
+        .fetch_one(pool)
+        .await
+}
+
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Announcement>, sqlx::Error> {
     sqlx::query_as::<_, Announcement>(
         r#"
@@ -100,7 +122,7 @@ pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
 
 pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
-        "UPDATE announcements SET deleted_at = NULL WHERE id = $1"
+        "UPDATE announcements SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL"
     )
     .bind(id)
     .execute(pool)
@@ -109,7 +131,7 @@ pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
 }
 
 pub async fn permanent_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM announcements WHERE id = $1")
+    let result = sqlx::query("DELETE FROM announcements WHERE id = $1 AND deleted_at IS NOT NULL")
         .bind(id)
         .execute(pool)
         .await?;

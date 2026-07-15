@@ -19,16 +19,26 @@ services:
       - key: JWT_EXPIRES_IN
         value: 604800
       - key: CORS_ORIGIN
-        value: https://socs-backend.onrender.com
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: RATE_LIMIT_ENABLED
+        value: true
+      - key: TRUST_PROXY_HEADERS
+        value: true
       - key: RUST_LOG
         value: info
-      - key: AWS_ACCESS_KEY_ID
+      - key: R2_ACCOUNT_ID
         sync: false
-      - key: AWS_SECRET_ACCESS_KEY
+      - key: R2_ACCESS_KEY_ID
         sync: false
-      - key: AWS_REGION
-        value: us-east-1
-      - key: S3_BUCKET_NAME
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_PUBLIC_URL
         sync: false
       - key: SMTP_HOST
         sync: false
@@ -38,7 +48,7 @@ services:
         sync: false
       - key: SMTP_PASSWORD
         sync: false
-      - key: SMTP_FROM_EMAIL
+      - key: FROM_EMAIL
         sync: false
       - key: SQLX_OFFLINE
         value: true
