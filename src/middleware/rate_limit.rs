@@ -153,3 +153,39 @@ pub async fn auth_rate_limit_middleware(
 
     Ok(next.run(request).await)
 }
+
+/// Rate limit middleware for public endpoints
+/// Limits: 500 requests per minute per IP
+pub async fn public_rate_limit_middleware(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let config = RateLimitConfig {
+        capacity: 500.0,
+        refill_rate: 500.0 / 60.0, // 500 tokens per minute
+        key_prefix: "rate_limit:public:ip".to_string(),
+        ttl: 2 * 60, // 2 minutes
+    };
+
+    let ip = extract_ip(&request);
+    let key = format!("{}", ip);
+
+    let mut redis = state.redis.clone();
+    
+    // Check rate limit (fail-open on Redis errors)
+    let (allowed, retry_after) = match check_rate_limit(&mut redis, &key, &config).await {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Rate limit check failed for public endpoint, allowing request: {:?}", e);
+            (true, 0)
+        }
+    };
+
+    if !allowed {
+        tracing::warn!("Rate limit exceeded for IP {} on public endpoint, retry after {} seconds", ip, retry_after);
+        return Err(ApiError::RateLimitExceeded { retry_after });
+    }
+
+    Ok(next.run(request).await)
+}
