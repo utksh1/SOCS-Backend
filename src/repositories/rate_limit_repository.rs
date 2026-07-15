@@ -15,77 +15,72 @@ pub async fn check_and_increment(
 ) -> Result<bool, sqlx::Error> {
     // Calculate window start time
     let window_start = Utc::now() - Duration::hours(window_hours as i64);
-
-    // Check if there's an existing rate limit record within the window
-    let existing: Option<(i32,)> = sqlx::query_as(
+    
+    // Clean up old records for this email/type combination first
+    sqlx::query(
         r#"
-        SELECT attempt_count FROM token_rate_limits
+        DELETE FROM token_rate_limits
         WHERE email = $1 
         AND token_type = $2 
-        AND window_start >= $3
+        AND window_start < $3
         "#,
     )
     .bind(email)
     .bind(token_type.as_str())
     .bind(window_start)
-    .fetch_optional(pool)
+    .execute(pool)
     .await?;
 
-    if let Some((count,)) = existing {
-        if count >= max_attempts {
+    // Atomic upsert with constraint check
+    // This ensures only one record exists per email+token_type+window_start combination
+    let result: Result<(i32,), sqlx::Error> = sqlx::query_as(
+        r#"
+        INSERT INTO token_rate_limits (email, token_type, attempt_count, window_start)
+        VALUES ($1, $2, 1, $3)
+        ON CONFLICT (email, token_type, window_start)
+        DO UPDATE SET attempt_count = token_rate_limits.attempt_count + 1
+        WHERE token_rate_limits.attempt_count < $4
+        RETURNING attempt_count
+        "#,
+    )
+    .bind(email)
+    .bind(token_type.as_str())
+    .bind(window_start)
+    .bind(max_attempts)
+    .fetch_one(pool)
+    .await;
+
+    match result {
+        Ok((new_count,)) => {
+            tracing::info!(
+                email = %email,
+                token_type = %token_type.as_str(),
+                attempt_count = new_count,
+                max_attempts = max_attempts,
+                "Rate limit check passed, counter incremented"
+            );
+            Ok(true)
+        }
+        Err(sqlx::Error::RowNotFound) => {
+            // The WHERE clause failed, meaning we're at the limit
             tracing::warn!(
                 email = %email,
                 token_type = %token_type.as_str(),
-                attempt_count = count,
                 max_attempts = max_attempts,
                 "Rate limit exceeded"
             );
-            return Ok(false);
+            Ok(false)
         }
-
-        // Increment existing counter
-        sqlx::query(
-            r#"
-            UPDATE token_rate_limits
-            SET attempt_count = attempt_count + 1
-            WHERE email = $1 
-            AND token_type = $2 
-            AND window_start >= $3
-            "#,
-        )
-        .bind(email)
-        .bind(token_type.as_str())
-        .bind(window_start)
-        .execute(pool)
-        .await?;
-
-        tracing::info!(
-            email = %email,
-            token_type = %token_type.as_str(),
-            new_count = count + 1,
-            "Rate limit counter incremented"
-        );
-    } else {
-        // Create new rate limit record
-        sqlx::query(
-            r#"
-            INSERT INTO token_rate_limits (email, token_type, attempt_count, window_start)
-            VALUES ($1, $2, 1, NOW())
-            "#,
-        )
-        .bind(email)
-        .bind(token_type.as_str())
-        .execute(pool)
-        .await?;
-
-        tracing::info!(
-            email = %email,
-            token_type = %token_type.as_str(),
-            "New rate limit record created"
-        );
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                email = %email,
+                token_type = %token_type.as_str(),
+                "Rate limit check failed"
+            );
+            Err(e)
+        }
     }
-
-    Ok(true)
 }
 
 /// Clean up old rate limit records (for scheduled cleanup)
