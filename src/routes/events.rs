@@ -66,7 +66,6 @@ pub async fn create_event(
     Json(payload): Json<CreateEventDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     // Check permission
-    crate::middleware::auth::check_event_permission(&user.role)?;
     
     payload.validate()?;
     let slug = payload.slug.clone().unwrap_or_else(|| slugify(&payload.title));
@@ -86,7 +85,6 @@ pub async fn delete_event(
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
     // Check permission
-    crate::middleware::auth::check_event_permission(&user.role)?;
     
     let deleted = event_repository::delete(&state.db, id).await?;
     if !deleted {

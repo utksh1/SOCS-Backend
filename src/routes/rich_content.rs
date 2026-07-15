@@ -44,7 +44,6 @@ pub async fn create_project_feature(
     payload.validate()?;
     
     // Check permission
-    crate::middleware::auth::check_resource_permission(&user.role)?;
 
     let feature = sqlx::query_as::<_, ProjectFeature>(
         r#"
@@ -74,7 +73,6 @@ pub async fn update_project_feature(
 ) -> Result<Json<serde_json::Value>> {
     payload.validate()?;
     
-    crate::middleware::auth::check_resource_permission(&user.role)?;
 
     let feature = sqlx::query_as::<_, ProjectFeature>(
         r#"
@@ -106,7 +104,6 @@ pub async fn delete_project_feature(
     Extension(user): Extension<SafeUser>,
     Path((project_id, feature_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
-    crate::middleware::auth::check_resource_permission(&user.role)?;
 
     let result = sqlx::query(
         "DELETE FROM project_features WHERE id = $1 AND project_id = $2"
@@ -132,7 +129,6 @@ pub async fn reorder_project_features(
     Path(project_id): Path<Uuid>,
     Json(payload): Json<ReorderItemsDto>,
 ) -> Result<Json<serde_json::Value>> {
-    crate::middleware::auth::check_resource_permission(&user.role)?;
 
     for item in &payload.items {
         let id = Uuid::parse_str(&item.id)
@@ -191,7 +187,6 @@ pub async fn add_project_contributor(
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     payload.validate()?;
     
-    crate::middleware::auth::check_resource_permission(&user.role)?;
 
     let team_member_id = Uuid::parse_str(&payload.team_member_id)
         .map_err(|_| crate::error::ApiError::BadRequest("Invalid team member ID".to_string()))?;
@@ -220,7 +215,6 @@ pub async fn remove_project_contributor(
     Extension(user): Extension<SafeUser>,
     Path((project_id, contributor_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
-    crate::middleware::auth::check_resource_permission(&user.role)?;
 
     let result = sqlx::query(
         "DELETE FROM project_contributors WHERE id = $1 AND project_id = $2"
@@ -269,7 +263,6 @@ pub async fn create_event_timeline_item(
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     payload.validate()?;
     
-    crate::middleware::auth::check_event_permission(&user.role)?;
 
     let item = sqlx::query_as::<_, EventTimelineItem>(
         r#"
@@ -300,7 +293,6 @@ pub async fn update_event_timeline_item(
 ) -> Result<Json<serde_json::Value>> {
     payload.validate()?;
     
-    crate::middleware::auth::check_event_permission(&user.role)?;
 
     let item = sqlx::query_as::<_, EventTimelineItem>(
         r#"
@@ -334,7 +326,6 @@ pub async fn delete_event_timeline_item(
     Extension(user): Extension<SafeUser>,
     Path((event_id, item_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
-    crate::middleware::auth::check_event_permission(&user.role)?;
 
     let result = sqlx::query(
         "DELETE FROM event_timeline_items WHERE id = $1 AND event_id = $2"
@@ -360,7 +351,6 @@ pub async fn reorder_event_timeline(
     Path(event_id): Path<Uuid>,
     Json(payload): Json<ReorderItemsDto>,
 ) -> Result<Json<serde_json::Value>> {
-    crate::middleware::auth::check_event_permission(&user.role)?;
 
     for item in &payload.items {
         let id = Uuid::parse_str(&item.id)
@@ -411,7 +401,6 @@ pub async fn create_event_prerequisite(
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     payload.validate()?;
     
-    crate::middleware::auth::check_event_permission(&user.role)?;
 
     let prerequisite = sqlx::query_as::<_, EventPrerequisite>(
         r#"
@@ -441,7 +430,6 @@ pub async fn update_event_prerequisite(
 ) -> Result<Json<serde_json::Value>> {
     payload.validate()?;
     
-    crate::middleware::auth::check_event_permission(&user.role)?;
 
     let prerequisite = sqlx::query_as::<_, EventPrerequisite>(
         r#"
@@ -473,7 +461,6 @@ pub async fn delete_event_prerequisite(
     Extension(user): Extension<SafeUser>,
     Path((event_id, prereq_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
-    crate::middleware::auth::check_event_permission(&user.role)?;
 
     let result = sqlx::query(
         "DELETE FROM event_prerequisites WHERE id = $1 AND event_id = $2"
@@ -499,7 +486,6 @@ pub async fn reorder_event_prerequisites(
     Path(event_id): Path<Uuid>,
     Json(payload): Json<ReorderItemsDto>,
 ) -> Result<Json<serde_json::Value>> {
-    crate::middleware::auth::check_event_permission(&user.role)?;
 
     for item in &payload.items {
         let id = Uuid::parse_str(&item.id)
@@ -550,7 +536,6 @@ pub async fn create_team_contribution(
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     payload.validate()?;
     
-    crate::middleware::auth::check_team_permission(&user.role)?;
 
     let contribution_date = chrono::NaiveDate::parse_from_str(&payload.contribution_date, "%Y-%m-%d")
         .map_err(|_| crate::error::ApiError::BadRequest("Invalid date format, use YYYY-MM-DD".to_string()))?;
@@ -585,7 +570,6 @@ pub async fn update_team_contribution(
 ) -> Result<Json<serde_json::Value>> {
     payload.validate()?;
     
-    crate::middleware::auth::check_team_permission(&user.role)?;
 
     let contribution_date = if let Some(date_str) = &payload.contribution_date {
         Some(chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
@@ -628,7 +612,6 @@ pub async fn delete_team_contribution(
     Extension(user): Extension<SafeUser>,
     Path((member_id, contribution_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>> {
-    crate::middleware::auth::check_team_permission(&user.role)?;
 
     let result = sqlx::query(
         "DELETE FROM team_contributions WHERE id = $1 AND team_member_id = $2"

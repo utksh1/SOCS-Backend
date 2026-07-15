@@ -7,60 +7,13 @@ use uuid::Uuid;
 #[sqlx(type_name = "user_role", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UserRole {
     Member,
-    EventOrganizer,
-    BlogEditor,
-    ResourceManager,
-    TeamLead,
     Management,
-    Admin,
 }
 
 impl UserRole {
-    /// Check if this role has admin privileges
-    pub fn is_admin(&self) -> bool {
-        matches!(self, UserRole::Admin)
-    }
-
-    /// Check if this role has management privileges (management or admin)
+    /// Check if this role has management privileges
     pub fn is_management(&self) -> bool {
-        matches!(self, UserRole::Management | UserRole::Admin)
-    }
-
-    /// Check if this role can manage events
-    pub fn can_manage_events(&self) -> bool {
-        matches!(
-            self,
-            UserRole::EventOrganizer | UserRole::Management | UserRole::Admin
-        )
-    }
-
-    /// Check if this role can manage blog posts
-    pub fn can_manage_blog(&self) -> bool {
-        matches!(
-            self,
-            UserRole::BlogEditor | UserRole::Management | UserRole::Admin
-        )
-    }
-
-    /// Check if this role can manage resources
-    pub fn can_manage_resources(&self) -> bool {
-        matches!(
-            self,
-            UserRole::ResourceManager | UserRole::Management | UserRole::Admin
-        )
-    }
-
-    /// Check if this role can manage team members
-    pub fn can_manage_team(&self) -> bool {
-        matches!(
-            self,
-            UserRole::TeamLead | UserRole::Management | UserRole::Admin
-        )
-    }
-
-    /// Check if this role can manage users
-    pub fn can_manage_users(&self) -> bool {
-        self.is_admin()
+        matches!(self, UserRole::Management)
     }
 }
 

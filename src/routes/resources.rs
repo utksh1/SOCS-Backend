@@ -59,7 +59,6 @@ pub async fn create_resource(
     Json(payload): Json<CreateResourceDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     // Check permission
-    crate::middleware::auth::check_resource_permission(&user.role)?;
     
     payload.validate()?;
     
@@ -76,7 +75,6 @@ pub async fn delete_resource(
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
     // Check permission
-    crate::middleware::auth::check_resource_permission(&user.role)?;
     
     let deleted = resource_repository::delete(&state.db, id).await?;
     if !deleted {

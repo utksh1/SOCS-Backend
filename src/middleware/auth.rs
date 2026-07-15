@@ -45,8 +45,8 @@ pub async fn auth_middleware(
     Ok(next.run(request).await)
 }
 
-// Middleware to check if user is admin
-pub async fn require_admin(
+// Middleware to check if user has TopLead tier (replaces admin check)
+pub async fn require_toplead(
     State(state): State<AppState>,
     mut request: Request,
     next: Next,
@@ -72,9 +72,16 @@ pub async fn require_admin(
     
     let user = auth_service::get_user_by_id(&state.db, user_id).await?;
     
-    // Check if user has admin role
-    if user.role != UserRole::Admin {
-        return Err(ApiError::Forbidden("Admin access required".to_string()));
+    // Check if user has TopLead tier in team table
+    let user_tier: Option<crate::models::team::MemberTier> = sqlx::query_scalar(
+        "SELECT tier FROM team WHERE created_by = $1 LIMIT 1"
+    )
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await?;
+    
+    if !matches!(user_tier, Some(crate::models::team::MemberTier::TopLead)) {
+        return Err(ApiError::Forbidden("TopLead access required".to_string()));
     }
     
     // Insert user into request extensions
@@ -83,48 +90,4 @@ pub async fn require_admin(
     Ok(next.run(request).await)
 }
 
-// Permission check helpers
-pub fn check_event_permission(user_role: &UserRole) -> Result<(), ApiError> {
-    if !user_role.can_manage_events() {
-        return Err(ApiError::Forbidden(
-            "You don't have permission to manage events".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-pub fn check_blog_permission(user_role: &UserRole) -> Result<(), ApiError> {
-    if !user_role.can_manage_blog() {
-        return Err(ApiError::Forbidden(
-            "You don't have permission to manage blog posts".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-pub fn check_resource_permission(user_role: &UserRole) -> Result<(), ApiError> {
-    if !user_role.can_manage_resources() {
-        return Err(ApiError::Forbidden(
-            "You don't have permission to manage resources".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-pub fn check_team_permission(user_role: &UserRole) -> Result<(), ApiError> {
-    if !user_role.can_manage_team() {
-        return Err(ApiError::Forbidden(
-            "You don't have permission to manage team members".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-pub fn check_user_management_permission(user_role: &UserRole) -> Result<(), ApiError> {
-    if !user_role.can_manage_users() {
-        return Err(ApiError::Forbidden(
-            "You don't have permission to manage users".to_string(),
-        ));
-    }
-    Ok(())
-}
+// Permission check helpers - removed, now using tier-based checks

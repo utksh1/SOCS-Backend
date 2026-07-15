@@ -111,7 +111,6 @@ pub async fn create_blog_post(
     Json(payload): Json<CreateBlogPostDto>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
     // Check permission
-    crate::middleware::auth::check_blog_permission(&user.role)?;
     
     payload.validate()?;
     let slug = payload.slug.clone().unwrap_or_else(|| slugify(&payload.title));
@@ -152,7 +151,6 @@ pub async fn delete_blog_post(
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
     // Check permission
-    crate::middleware::auth::check_blog_permission(&user.role)?;
     
     let deleted = blog_post_repository::delete(&state.db, id).await?;
     if !deleted {

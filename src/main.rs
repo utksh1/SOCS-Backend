@@ -81,11 +81,11 @@ async fn main() {
     
     // Auth middleware
     let auth_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::auth_middleware);
-    let admin_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::require_admin);
+    let toplead_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::require_toplead);
     
     // Build auth routes
     let auth_routes = Router::new()
-        .route("/register", axum::routing::post(routes::auth::register).layer(admin_layer.clone()))
+        .route("/register", axum::routing::post(routes::auth::register).layer(toplead_layer.clone()))
         .route("/login", axum::routing::post(routes::auth::login))
         .route("/me", axum::routing::get(routes::auth::get_me).layer(auth_layer.clone()))
         .route("/update-name", axum::routing::patch(routes::auth::update_name).layer(auth_layer.clone()))
@@ -128,7 +128,7 @@ async fn main() {
         .route("/", axum::routing::post(routes::team::create_team_member))
         .route("/:id", axum::routing::put(routes::team::update_team_member)
             .delete(routes::team::delete_team_member))
-        .layer(admin_layer.clone());
+        .layer(auth_layer.clone());
     
     let team_routes = team_public.merge(team_protected);
     
