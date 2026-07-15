@@ -1,95 +1,101 @@
 use sqlx::PgPool;
-use uuid::Uuid;
 
-// Import necessary types from the socs_backend crate
-// Note: Since this is a binary crate, we need to ensure modules are accessible
+// Integration tests for soft deletion functionality
+// Note: These tests use sqlx::test which automatically sets up and tears down test databases
 
 #[sqlx::test]
 async fn test_project_soft_delete_and_restore(pool: PgPool) -> sqlx::Result<()> {
     // Create a test user first (needed for created_by)
-    let user = sqlx::query!(
+    let user_id: uuid::Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO users (name, email, password, roles)
         VALUES ($1, $2, $3, ARRAY['MEMBER']::user_role[])
         RETURNING id
-        "#,
-        "Test User",
-        "test@example.com",
-        "$2b$12$dummy_hash"
+        "#
     )
+    .bind("Test User")
+    .bind("test@example.com")
+    .bind("$2b$12$dummy_hash")
     .fetch_one(&pool)
     .await?;
 
-    // Create a test project
-    let project = sqlx::query!(
+    // Create a test project using query_scalar to avoid type issues
+    let project_id: uuid::Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO projects (slug, title, description, tech_stack, tags, featured, status, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::content_status, $8)
-        RETURNING id, deleted_at
-        "#,
-        "test-project",
-        "Test Project",
-        "A test project for soft deletion",
-        &vec!["Rust", "PostgreSQL"],
-        &vec!["test"],
-        false,
-        "pending",
-        user.id
+        VALUES ($1, $2, $3, $4, $5, $6, 'pending'::content_status, $7)
+        RETURNING id
+        "#
     )
+    .bind("test-project")
+    .bind("Test Project")
+    .bind("A test project for soft deletion")
+    .bind(&vec!["Rust", "PostgreSQL"])
+    .bind(&vec!["test"])
+    .bind(false)
+    .bind(user_id)
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(project.deleted_at, None, "Project should not be deleted initially");
+    // Verify project is not deleted initially
+    let initial_deleted_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deleted_at FROM projects WHERE id = $1"
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await?;
+
+    assert_eq!(initial_deleted_at, None, "Project should not be deleted initially");
 
     // Perform soft delete
-    let soft_delete_result = sqlx::query!(
-        "UPDATE projects SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
-        project.id
+    let soft_delete_result = sqlx::query(
+        "UPDATE projects SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"
     )
+    .bind(project_id)
     .execute(&pool)
     .await?;
 
     assert_eq!(soft_delete_result.rows_affected(), 1, "Soft delete should affect 1 row");
 
     // Verify project is soft deleted (not visible in normal queries)
-    let visible_project = sqlx::query!(
-        "SELECT id FROM projects WHERE id = $1 AND deleted_at IS NULL",
-        project.id
+    let visible_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projects WHERE id = $1 AND deleted_at IS NULL"
     )
-    .fetch_optional(&pool)
-    .await?;
-
-    assert_eq!(visible_project, None, "Soft deleted project should not appear in normal queries");
-
-    // Verify project still exists with deleted_at set
-    let deleted_project = sqlx::query!(
-        "SELECT id, deleted_at FROM projects WHERE id = $1",
-        project.id
-    )
+    .bind(project_id)
     .fetch_one(&pool)
     .await?;
 
-    assert!(deleted_project.deleted_at.is_some(), "Project should have deleted_at timestamp");
+    assert_eq!(visible_count, 0, "Soft deleted project should not appear in normal queries");
+
+    // Verify project still exists with deleted_at set
+    let deleted_at_check: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deleted_at FROM projects WHERE id = $1"
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await?;
+
+    assert!(deleted_at_check.is_some(), "Project should have deleted_at timestamp");
 
     // Restore the project
-    let restore_result = sqlx::query!(
-        "UPDATE projects SET deleted_at = NULL WHERE id = $1",
-        project.id
+    let restore_result = sqlx::query(
+        "UPDATE projects SET deleted_at = NULL WHERE id = $1"
     )
+    .bind(project_id)
     .execute(&pool)
     .await?;
 
     assert_eq!(restore_result.rows_affected(), 1, "Restore should affect 1 row");
 
     // Verify project is visible again
-    let restored_project = sqlx::query!(
-        "SELECT id, deleted_at FROM projects WHERE id = $1 AND deleted_at IS NULL",
-        project.id
+    let restored_deleted_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deleted_at FROM projects WHERE id = $1 AND deleted_at IS NULL"
     )
+    .bind(project_id)
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(restored_project.deleted_at, None, "Restored project should have deleted_at = NULL");
+    assert_eq!(restored_deleted_at, None, "Restored project should have deleted_at = NULL");
 
     Ok(())
 }
@@ -97,70 +103,78 @@ async fn test_project_soft_delete_and_restore(pool: PgPool) -> sqlx::Result<()> 
 #[sqlx::test]
 async fn test_user_soft_delete(pool: PgPool) -> sqlx::Result<()> {
     // Create a test user
-    let user = sqlx::query!(
+    let user_id: uuid::Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO users (name, email, password, roles)
         VALUES ($1, $2, $3, ARRAY['MEMBER']::user_role[])
-        RETURNING id, deleted_at
-        "#,
-        "Test User for Soft Delete",
-        "softdelete@example.com",
-        "$2b$12$dummy_hash"
+        RETURNING id
+        "#
     )
+    .bind("Test User for Soft Delete")
+    .bind("softdelete@example.com")
+    .bind("$2b$12$dummy_hash")
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(user.deleted_at, None, "User should not be deleted initially");
+    // Verify user is not deleted initially
+    let initial_deleted_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deleted_at FROM users WHERE id = $1"
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+
+    assert_eq!(initial_deleted_at, None, "User should not be deleted initially");
 
     // Perform soft delete on user
-    let soft_delete_result = sqlx::query!(
-        "UPDATE users SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
-        user.id
+    let soft_delete_result = sqlx::query(
+        "UPDATE users SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"
     )
+    .bind(user_id)
     .execute(&pool)
     .await?;
 
     assert_eq!(soft_delete_result.rows_affected(), 1, "Soft delete should affect 1 row");
 
     // Verify user is soft deleted (not visible in normal queries)
-    let visible_user = sqlx::query!(
-        "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL",
-        user.id
+    let visible_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users WHERE id = $1 AND deleted_at IS NULL"
     )
-    .fetch_optional(&pool)
-    .await?;
-
-    assert_eq!(visible_user, None, "Soft deleted user should not appear in normal queries");
-
-    // Verify user still exists in database with deleted_at timestamp
-    let deleted_user = sqlx::query!(
-        "SELECT id, deleted_at FROM users WHERE id = $1",
-        user.id
-    )
+    .bind(user_id)
     .fetch_one(&pool)
     .await?;
 
-    assert!(deleted_user.deleted_at.is_some(), "User should have deleted_at timestamp");
+    assert_eq!(visible_count, 0, "Soft deleted user should not appear in normal queries");
+
+    // Verify user still exists in database with deleted_at timestamp
+    let deleted_at_check: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deleted_at FROM users WHERE id = $1"
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+
+    assert!(deleted_at_check.is_some(), "User should have deleted_at timestamp");
 
     // Restore the user
-    let restore_result = sqlx::query!(
-        "UPDATE users SET deleted_at = NULL WHERE id = $1",
-        user.id
+    let restore_result = sqlx::query(
+        "UPDATE users SET deleted_at = NULL WHERE id = $1"
     )
+    .bind(user_id)
     .execute(&pool)
     .await?;
 
     assert_eq!(restore_result.rows_affected(), 1, "Restore should affect 1 row");
 
     // Verify user is visible again
-    let restored_user = sqlx::query!(
-        "SELECT id, deleted_at FROM users WHERE id = $1 AND deleted_at IS NULL",
-        user.id
+    let restored_deleted_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deleted_at FROM users WHERE id = $1 AND deleted_at IS NULL"
     )
+    .bind(user_id)
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(restored_user.deleted_at, None, "Restored user should have deleted_at = NULL");
+    assert_eq!(restored_deleted_at, None, "Restored user should have deleted_at = NULL");
 
     Ok(())
 }
@@ -168,119 +182,117 @@ async fn test_user_soft_delete(pool: PgPool) -> sqlx::Result<()> {
 #[sqlx::test]
 async fn test_permanent_delete(pool: PgPool) -> sqlx::Result<()> {
     // Create a test user
-    let user = sqlx::query!(
+    let user_id: uuid::Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO users (name, email, password, roles)
         VALUES ($1, $2, $3, ARRAY['MEMBER']::user_role[])
         RETURNING id
-        "#,
-        "Test User",
-        "permanent@example.com",
-        "$2b$12$dummy_hash"
+        "#
     )
+    .bind("Test User")
+    .bind("permanent@example.com")
+    .bind("$2b$12$dummy_hash")
     .fetch_one(&pool)
     .await?;
 
     // Create a test project
-    let project = sqlx::query!(
+    let project_id: uuid::Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO projects (slug, title, description, tech_stack, tags, featured, status, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::content_status, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, 'pending'::content_status, $7)
         RETURNING id
-        "#,
-        "permanent-delete-test",
-        "Permanent Delete Test",
-        "A project to test permanent deletion",
-        &vec!["Rust"],
-        &vec!["test"],
-        false,
-        "pending",
-        user.id
+        "#
     )
+    .bind("permanent-delete-test")
+    .bind("Permanent Delete Test")
+    .bind("A project to test permanent deletion")
+    .bind(&vec!["Rust"])
+    .bind(&vec!["test"])
+    .bind(false)
+    .bind(user_id)
     .fetch_one(&pool)
     .await?;
 
     // First soft delete the project
-    sqlx::query!(
-        "UPDATE projects SET deleted_at = NOW() WHERE id = $1",
-        project.id
+    sqlx::query(
+        "UPDATE projects SET deleted_at = NOW() WHERE id = $1"
     )
+    .bind(project_id)
     .execute(&pool)
     .await?;
 
     // Verify project exists (soft deleted)
-    let soft_deleted = sqlx::query!(
-        "SELECT id FROM projects WHERE id = $1",
-        project.id
+    let soft_deleted_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projects WHERE id = $1"
     )
-    .fetch_optional(&pool)
+    .bind(project_id)
+    .fetch_one(&pool)
     .await?;
 
-    assert!(soft_deleted.is_some(), "Project should exist after soft delete");
+    assert_eq!(soft_deleted_count, 1, "Project should exist after soft delete");
 
     // Perform permanent delete
-    let permanent_delete_result = sqlx::query!(
-        "DELETE FROM projects WHERE id = $1",
-        project.id
+    let permanent_delete_result = sqlx::query(
+        "DELETE FROM projects WHERE id = $1"
     )
+    .bind(project_id)
     .execute(&pool)
     .await?;
 
     assert_eq!(permanent_delete_result.rows_affected(), 1, "Permanent delete should affect 1 row");
 
     // Verify project no longer exists in database
-    let deleted_project = sqlx::query!(
-        "SELECT id FROM projects WHERE id = $1",
-        project.id
+    let deleted_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projects WHERE id = $1"
     )
-    .fetch_optional(&pool)
+    .bind(project_id)
+    .fetch_one(&pool)
     .await?;
 
-    assert_eq!(deleted_project, None, "Project should not exist after permanent delete");
+    assert_eq!(deleted_count, 0, "Project should not exist after permanent delete");
 
     // Test permanent delete on event
-    let event = sqlx::query!(
+    let event_id: uuid::Uuid = sqlx::query_scalar(
         r#"
-        INSERT INTO events (title, description, location, event_date, registration_deadline)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO events (slug, title, description, date, type, status)
+        VALUES ($1, $2, $3, $4, 'workshop'::event_type, 'upcoming'::event_status)
         RETURNING id
-        "#,
-        "Test Event",
-        "Event for permanent deletion test",
-        "Test Location",
-        chrono::Utc::now() + chrono::Duration::days(30),
-        chrono::Utc::now() + chrono::Duration::days(20)
+        "#
     )
+    .bind("test-event")
+    .bind("Test Event")
+    .bind("Event for permanent deletion test")
+    .bind(chrono::Utc::now() + chrono::Duration::days(30))
     .fetch_one(&pool)
     .await?;
 
     // Soft delete first
-    sqlx::query!(
-        "UPDATE events SET deleted_at = NOW() WHERE id = $1",
-        event.id
+    sqlx::query(
+        "UPDATE events SET deleted_at = NOW() WHERE id = $1"
     )
+    .bind(event_id)
     .execute(&pool)
     .await?;
 
     // Permanent delete
-    let event_delete_result = sqlx::query!(
-        "DELETE FROM events WHERE id = $1",
-        event.id
+    let event_delete_result = sqlx::query(
+        "DELETE FROM events WHERE id = $1"
     )
+    .bind(event_id)
     .execute(&pool)
     .await?;
 
     assert_eq!(event_delete_result.rows_affected(), 1, "Event permanent delete should affect 1 row");
 
     // Verify event is gone
-    let deleted_event = sqlx::query!(
-        "SELECT id FROM events WHERE id = $1",
-        event.id
+    let event_deleted_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM events WHERE id = $1"
     )
-    .fetch_optional(&pool)
+    .bind(event_id)
+    .fetch_one(&pool)
     .await?;
 
-    assert_eq!(deleted_event, None, "Event should not exist after permanent delete");
+    assert_eq!(event_deleted_count, 0, "Event should not exist after permanent delete");
 
     Ok(())
 }
@@ -288,52 +300,51 @@ async fn test_permanent_delete(pool: PgPool) -> sqlx::Result<()> {
 #[sqlx::test]
 async fn test_soft_delete_idempotency(pool: PgPool) -> sqlx::Result<()> {
     // Create a test user and project
-    let user = sqlx::query!(
+    let user_id: uuid::Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO users (name, email, password, roles)
         VALUES ($1, $2, $3, ARRAY['MEMBER']::user_role[])
         RETURNING id
-        "#,
-        "Test User",
-        "idempotency@example.com",
-        "$2b$12$dummy_hash"
+        "#
     )
+    .bind("Test User")
+    .bind("idempotency@example.com")
+    .bind("$2b$12$dummy_hash")
     .fetch_one(&pool)
     .await?;
 
-    let project = sqlx::query!(
+    let project_id: uuid::Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO projects (slug, title, description, tech_stack, tags, featured, status, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::content_status, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, 'pending'::content_status, $7)
         RETURNING id
-        "#,
-        "idempotency-test",
-        "Idempotency Test",
-        "Test idempotent soft delete",
-        &vec!["Rust"],
-        &vec!["test"],
-        false,
-        "pending",
-        user.id
+        "#
     )
+    .bind("idempotency-test")
+    .bind("Idempotency Test")
+    .bind("Test idempotent soft delete")
+    .bind(&vec!["Rust"])
+    .bind(&vec!["test"])
+    .bind(false)
+    .bind(user_id)
     .fetch_one(&pool)
     .await?;
 
     // First soft delete
-    let first_delete = sqlx::query!(
-        "UPDATE projects SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
-        project.id
+    let first_delete = sqlx::query(
+        "UPDATE projects SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"
     )
+    .bind(project_id)
     .execute(&pool)
     .await?;
 
     assert_eq!(first_delete.rows_affected(), 1, "First soft delete should affect 1 row");
 
     // Second soft delete (should affect 0 rows since already deleted)
-    let second_delete = sqlx::query!(
-        "UPDATE projects SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
-        project.id
+    let second_delete = sqlx::query(
+        "UPDATE projects SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"
     )
+    .bind(project_id)
     .execute(&pool)
     .await?;
 
@@ -345,81 +356,80 @@ async fn test_soft_delete_idempotency(pool: PgPool) -> sqlx::Result<()> {
 #[sqlx::test]
 async fn test_soft_delete_cascade_behavior(pool: PgPool) -> sqlx::Result<()> {
     // Create a test user
-    let user = sqlx::query!(
+    let user_id: uuid::Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO users (name, email, password, roles)
         VALUES ($1, $2, $3, ARRAY['MEMBER']::user_role[])
         RETURNING id
-        "#,
-        "Test User",
-        "cascade@example.com",
-        "$2b$12$dummy_hash"
+        "#
     )
+    .bind("Test User")
+    .bind("cascade@example.com")
+    .bind("$2b$12$dummy_hash")
     .fetch_one(&pool)
     .await?;
 
     // Create a test project
-    let project = sqlx::query!(
+    let project_id: uuid::Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO projects (slug, title, description, tech_stack, tags, featured, status, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::content_status, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, 'pending'::content_status, $7)
         RETURNING id
-        "#,
-        "cascade-test",
-        "Cascade Test",
-        "Test cascade behavior",
-        &vec!["Rust"],
-        &vec!["test"],
-        false,
-        "pending",
-        user.id
+        "#
     )
+    .bind("cascade-test")
+    .bind("Cascade Test")
+    .bind("Test cascade behavior")
+    .bind(&vec!["Rust"])
+    .bind(&vec!["test"])
+    .bind(false)
+    .bind(user_id)
     .fetch_one(&pool)
     .await?;
 
     // Add a project feature (if the table exists)
-    let feature_result = sqlx::query!(
+    let feature_result = sqlx::query_scalar::<_, uuid::Uuid>(
         r#"
         INSERT INTO project_features (project_id, title, description, display_order)
         VALUES ($1, $2, $3, $4)
         RETURNING id
-        "#,
-        project.id,
-        "Test Feature",
-        "A test feature",
-        0
+        "#
     )
+    .bind(project_id)
+    .bind("Test Feature")
+    .bind("A test feature")
+    .bind(0i32)
     .fetch_optional(&pool)
     .await;
 
     // Soft delete the project
-    sqlx::query!(
-        "UPDATE projects SET deleted_at = NOW() WHERE id = $1",
-        project.id
+    sqlx::query(
+        "UPDATE projects SET deleted_at = NOW() WHERE id = $1"
     )
+    .bind(project_id)
     .execute(&pool)
     .await?;
 
     // Verify project is soft deleted
-    let deleted_project = sqlx::query!(
-        "SELECT deleted_at FROM projects WHERE id = $1",
-        project.id
+    let deleted_at_check: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deleted_at FROM projects WHERE id = $1"
     )
+    .bind(project_id)
     .fetch_one(&pool)
     .await?;
 
-    assert!(deleted_project.deleted_at.is_some(), "Project should be soft deleted");
+    assert!(deleted_at_check.is_some(), "Project should be soft deleted");
 
     // If we created a feature, verify it's still accessible (soft delete doesn't cascade automatically)
-    if let Ok(Some(feature)) = feature_result {
-        let feature_check = sqlx::query!(
-            "SELECT id FROM project_features WHERE id = $1",
-            feature.id
+    if let Ok(Some(feature_id)) = feature_result {
+        let feature_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM project_features WHERE id = $1"
         )
-        .fetch_optional(&pool)
+        .bind(feature_id)
+        .fetch_one(&pool)
         .await?;
 
-        assert!(feature_check.is_some(), "Project features should remain in database (soft delete doesn't cascade by default)");
+        assert_eq!(feature_count, 1, "Project features should remain in database (soft delete doesn't cascade by default)");
     }
 
     Ok(())
