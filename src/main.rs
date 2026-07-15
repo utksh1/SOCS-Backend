@@ -101,6 +101,9 @@ async fn main() {
     let optional_auth_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::optional_auth_middleware);
     let toplead_layer = axum::middleware::from_fn_with_state(state.clone(), middleware::auth::require_toplead);
     
+    // Verification middleware (requires email verification for critical operations)
+    let verification_layer = axum::middleware::from_fn(middleware::verification::require_verified_email);
+    
     // Rate limit middleware
     let auth_rate_limit = axum::middleware::from_fn_with_state(state.clone(), middleware::rate_limit::auth_rate_limit_middleware);
     let public_rate_limit = axum::middleware::from_fn_with_state(state.clone(), middleware::rate_limit::public_rate_limit_middleware);
@@ -121,9 +124,15 @@ async fn main() {
         .route("/reset-password", axum::routing::post(routes::auth::reset_password))
         .layer(auth_rate_limit.clone());
     
-    // Change password and resend verification routes (auth rate limit + auth required)
-    let auth_sensitive = Router::new()
+    // Change password route (auth rate limit + auth required + verification required)
+    let auth_change_password = Router::new()
         .route("/change-password", axum::routing::patch(routes::auth::change_password))
+        .layer(auth_rate_limit.clone())
+        .layer(verification_layer.clone())
+        .layer(auth_layer.clone());
+    
+    // Resend verification route (auth rate limit + auth required, no verification needed)
+    let auth_resend = Router::new()
         .route("/resend-verification", axum::routing::post(routes::auth::resend_verification))
         .layer(auth_rate_limit.clone())
         .layer(auth_layer.clone());
@@ -137,7 +146,8 @@ async fn main() {
     
     let auth_routes = auth_register
         .merge(auth_public)
-        .merge(auth_sensitive)
+        .merge(auth_change_password)
+        .merge(auth_resend)
         .merge(auth_protected);
     
     // Build project routes (GET public for approved, POST/PUT/DELETE protected with approval workflow)
@@ -186,12 +196,18 @@ async fn main() {
     
     let user_protected = Router::new()
         .route("/", axum::routing::post(routes::users::create_user))
-        .route("/:id", axum::routing::put(routes::users::update_user)
-            .delete(routes::users::delete_user))
+        .route("/:id", axum::routing::put(routes::users::update_user))
         .layer(authenticated_rate_limit.clone())
         .layer(auth_layer.clone());
     
-    let user_routes = user_public.merge(user_protected);
+    // Critical user operations requiring email verification
+    let user_critical = Router::new()
+        .route("/:id", axum::routing::delete(routes::users::delete_user))
+        .layer(authenticated_rate_limit.clone())
+        .layer(verification_layer.clone())
+        .layer(auth_layer.clone());
+    
+    let user_routes = user_public.merge(user_protected).merge(user_critical);
     
     // Build resource routes (GET public for approved, POST/PUT/DELETE protected with approval workflow)
     let resource_public = Router::new()
