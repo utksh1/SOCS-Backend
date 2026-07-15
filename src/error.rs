@@ -27,14 +27,14 @@ impl IntoResponse for ApiError {
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(json!({
                         "success": false,
-                        "error": format!("Rate limit exceeded. Please try again in {} seconds.", retry_after),
+                        "message": format!("Rate limit exceeded. Please try again in {} seconds.", retry_after),
                         "retry_after": retry_after,
                     })),
                 ).into_response();
                 
                 response.headers_mut().insert(
                     "Retry-After",
-                    retry_after.to_string().parse().unwrap()
+                    retry_after.to_string().parse().expect("u64 should always produce valid header value")
                 );
                 
                 response
