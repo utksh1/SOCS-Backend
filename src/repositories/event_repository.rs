@@ -20,7 +20,7 @@ pub async fn create(
         r#"
         INSERT INTO events (slug, title, description, date, type, status, location, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING id, slug, title, description, date, type, status, location, created_by, created_at, updated_at
+        RETURNING id, slug, title, description, date, type, status, location, created_by, created_at, updated_at, deleted_at
         "#,
     )
     .bind(slug)
@@ -40,9 +40,9 @@ pub async fn create(
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Event>, sqlx::Error> {
     sqlx::query_as::<_, Event>(
         r#"
-        SELECT id, slug, title, description, date, type, status, location, created_by, created_at, updated_at
+        SELECT id, slug, title, description, date, type, status, location, created_by, created_at, updated_at, deleted_at
         FROM events
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         "#,
     )
     .bind(id)
@@ -50,11 +50,47 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Event>, sqlx::
     .await
 }
 
-pub async fn delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE events SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn restore(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE events SET deleted_at = NULL WHERE id = $1"
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn permanent_delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM events WHERE id = $1")
         .bind(id)
         .execute(pool)
         .await?;
     
     Ok(result.rows_affected() > 0)
+}
+
+pub async fn find_by_id_with_deleted(pool: &PgPool, id: Uuid) -> Result<Option<Event>, sqlx::Error> {
+    sqlx::query_as::<_, Event>(
+        "SELECT id, slug, title, description, date, type, status, location, created_by, created_at, updated_at, deleted_at FROM events WHERE id = $1"
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn delete(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    // Now performs soft delete
+    soft_delete(pool, id).await
 }
